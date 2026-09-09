@@ -1,5 +1,9 @@
 # Proxy Location Sync
 
+[![test](https://github.com/xinian5216/proxy-location-sync/actions/workflows/test.yml/badge.svg)](https://github.com/xinian5216/proxy-location-sync/actions/workflows/test.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-0f766e)](./LICENSE)
+[![Release](https://img.shields.io/github/v/release/xinian5216/proxy-location-sync)](https://github.com/xinian5216/proxy-location-sync/releases)
+
 **Chrome / Edge Manifest V3 扩展。** 检测浏览器**当前真实公网出口 IP**，并把网页里的地理位置、时区同步到这个出口。
 
 Detect the browser’s real public exit IP and sync webpage geolocation + timezone to that location — without touching your proxy app.
@@ -45,6 +49,8 @@ git clone https://github.com/xinian5216/proxy-location-sync.git
 4. 工具栏图标角标为国家代码（如 `JP` / `US`）。切代理后数秒应变。
 
 不需要 `.crx`，不需要上架。代理软件保持原样。
+
+也可以从 [Releases](https://github.com/xinian5216/proxy-location-sync/releases) 下载 `proxy-location-sync.zip`，解压后根目录必须能直接看到 `manifest.json`，再按上面步骤加载。
 
 从 1.1.0 / 1.1.2 升级：在 `chrome://extensions` **重新加载**本扩展。1.1.3 是稳定性修复：IP 探测与 Geo 查询解耦、同 IP 心跳不再写 storage，并修正 Date / 权限语义。不改 UI 风格、不加功能。
 
