@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Proxy Location Sync · iframe 覆盖测试</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #09090b;
+        --fg: #f4f4f5;
+        --muted: #a1a1aa;
+        --border: #27272a;
+        --surface: #121214;
+        --ok: #4ade80;
+        --warn: #fbbf24;
+      }
+      body {
+        margin: 0;
+        font: 15px/1.5 "IBM Plex Sans", "Segoe UI", sans-serif;
+        background: var(--bg);
+        color: var(--fg);
+        padding: 24px;
+      }
+      h1 { font-size: 1.4rem; font-weight: 600; }
+      p { color: var(--muted); max-width: 42rem; }
+      .grid { display: grid; gap: 12px; margin-top: 20px; }
+      article {
+        border: 1px solid var(--border);
+        background: var(--surface);
+        border-radius: 16px;
+        padding: 16px;
+      }
+      .ok { color: var(--ok); }
+      .warn { color: var(--warn); }
+      iframe { width: 100%; height: 88px; border: 0; border-radius: 8px; background: #000; }
+      code { font-family: ui-monospace, monospace; font-size: 12px; }
+    </style>
+  </head>
+  <body>
+    <h1>about: / data: / blob: iframe</h1>
+    <p>
+      Chromium 对由匹配 http/https origin 创建的 <code>about:</code>、<code>data:</code>、
+      <code>blob:</code>、<code>filesystem:</code> frame 可通过
+      <code>match_origin_as_fallback</code> 注入 content script。
+      独立、无匹配 initiator/origin 的 opaque frame 不保证覆盖。
+      加载本扩展后打开本页，各 frame 应报告与顶层相同的虚拟时区（若同步已开启）。
+    </p>
+    <div class="grid" id="grid"></div>
+    <script>
+      const kinds = [
+        { id: "about", label: "about:blank", make: makeAbout },
+        { id: "data", label: "data:text/html", make: makeData },
+        { id: "blob", label: "blob:", make: makeBlob },
+      ];
+      const grid = document.getElementById("grid");
+
+      const probe = `(function(){
+        function report() {
+          var tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+          parent.postMessage({ source: location.protocol, tz: tz, href: String(location.href).slice(0, 48) }, "*");
+        }
+        report();
+        setTimeout(report, 400);
+      })();`;
+
+      function card(kind) {
+        const el = document.createElement("article");
+        el.innerHTML = "<strong>" + kind.label + "</strong><div class='status warn' id='st-" + kind.id + "'>等待 frame…</div>";
+        const frame = kind.make();
+        frame.setAttribute("data-kind", kind.id);
+        el.appendChild(frame);
+        grid.appendChild(el);
+      }
+
+      function makeAbout() {
+        const f = document.createElement("iframe");
+        f.src = "about:blank";
+        f.addEventListener("load", () => {
+          try {
+            const doc = f.contentDocument;
+            const s = doc.createElement("script");
+            s.textContent = probe;
+            doc.documentElement.appendChild(s);
+          } catch (err) {
+            setStatus("about", false, String(err));
+          }
+        });
+        return f;
+      }
+
+      function makeData() {
+        const html = "<!doctype html><title>data</title><script>" + probe + "<\/script>";
+        const f = document.createElement("iframe");
+        f.src = "data:text/html;charset=utf-8," + encodeURIComponent(html);
+        return f;
+      }
+
+      function makeBlob() {
+        const html = "<!doctype html><title>blob</title><script>" + probe + "<\/script>";
+        const url = URL.createObjectURL(new Blob([html], { type: "text/html" }));
+        const f = document.createElement("iframe");
+        f.src = url;
+        return f;
+      }
+
+      function setStatus(id, ok, text) {
+        const el = document.getElementById("st-" + id);
+        if (!el) return;
+        el.className = "status " + (ok ? "ok" : "warn");
+        el.textContent = text;
+      }
+
+      window.addEventListener("message", (ev) => {
+        const d = ev.data || {};
+        if (!d.tz) return;
+        const proto = String(d.source || "");
+        const id = proto === "about:" ? "about" : proto === "data:" ? "data" : proto === "blob:" ? "blob" : "";
+        if (!id) return;
+        const hostTz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+        const same = d.tz === hostTz;
+        setStatus(id, true, "frame tz = " + d.tz + (same ? "（与顶层一致）" : "（与顶层不同）"));
+      });
+
+      kinds.forEach(card);
+    </script>
+  </body>
+</html>

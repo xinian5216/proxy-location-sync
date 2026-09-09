@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>Proxy Location Sync — HTMLGeolocationElement</title>
+    <style>
+      body { font: 14px/1.5 system-ui, sans-serif; max-width: 42rem; margin: 2rem auto; padding: 0 1rem; }
+      code, pre { font-family: ui-monospace, monospace; }
+      .skip { color: #71717a; }
+      .ok { color: #15803d; }
+      .fail { color: #b91c1c; }
+      geolocation { display: block; margin: 1rem 0; }
+    </style>
+  </head>
+  <body>
+    <h1>Chrome 144+ <code><geolocation></code></h1>
+    <p>
+      加载 Proxy Location Sync 后打开本页。Chrome 低于 144 会显示 SKIP。
+      若接口存在，<code>position</code> 必须是扩展的虚拟坐标，不能是系统 GPS。
+    </p>
+    <p class="skip">
+      合成 <code>location</code> 事件的 <code>isTrusted</code> 无法变成 true，这是浏览器限制。
+    </p>
+    <pre id="out">检测中…</pre>
+    <geolocation id="geo-click">click</geolocation>
+    <geolocation id="geo-auto" autolocate>autolocate</geolocation>
+    <geolocation id="geo-watch" watch>watch</geolocation>
+    <script>
+      const out = document.getElementById("out");
+      const lines = [];
+      function log(s) { lines.push(s); out.textContent = lines.join("\n"); }
+
+      if (typeof HTMLGeolocationElement !== "function") {
+        log("SKIP: HTMLGeolocationElement 不存在（Chrome < 144 或未启用 GeolocationElement）。");
+      } else {
+        log("HTMLGeolocationElement: 存在");
+        function describeEl(id) {
+          const el = document.getElementById(id);
+          el.addEventListener("location", (ev) => {
+            const pos = ev.target.position;
+            const lat = pos && pos.coords && pos.coords.latitude;
+            log(id + " location isTrusted=" + ev.isTrusted + " lat=" + lat);
+          });
+          const pos = el.position;
+          log(id + " initial position lat=" + (pos && pos.coords && pos.coords.latitude));
+        }
+        describeEl("geo-click");
+        describeEl("geo-auto");
+        describeEl("geo-watch");
+        const created = document.createElement("geolocation");
+        created.setAttribute("autolocate", "");
+        document.body.appendChild(created);
+        log("createElement lat=" + (created.position && created.position.coords && created.position.coords.latitude));
+      }
+    </script>
+  </body>
+</html>

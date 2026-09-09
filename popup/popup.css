@@ -1,0 +1,270 @@
+:root {
+  --bg: #09090b;
+  --surface: #121214;
+  --elevated: #1a1a1e;
+  --fg: #f4f4f5;
+  --muted: #a1a1aa;
+  --subtle: #71717a;
+  --border: color-mix(in oklab, #f4f4f5 12%, transparent);
+  --accent: #2dd4bf;
+  --accent-dim: #134e4a;
+  --ok: #4ade80;
+  --warn: #fbbf24;
+  --danger: #f87171;
+  --radius: 16px;
+  --font: "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", system-ui, sans-serif;
+  --mono: ui-monospace, "Cascadia Code", "SF Mono", Menlo, Consolas, monospace;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  width: 360px;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font);
+  font-size: 13px;
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+}
+
+.shell {
+  padding: 16px 16px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.mark {
+  width: 28px;
+  height: 28px;
+  border-radius: 9px;
+  background:
+    radial-gradient(circle at 30% 30%, color-mix(in oklab, var(--accent) 70%, white), transparent 40%),
+    linear-gradient(160deg, #1a1a1e, #0f766e);
+  border: 1px solid color-mix(in oklab, var(--accent) 40%, transparent);
+  flex-shrink: 0;
+}
+
+h1 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.sub {
+  margin: 2px 0 0;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.switch {
+  position: relative;
+  width: 44px;
+  height: 26px;
+  flex-shrink: 0;
+}
+
+.switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.slider {
+  position: absolute;
+  inset: 0;
+  background: var(--elevated);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background 150ms ease, border-color 150ms ease;
+}
+
+.slider::after {
+  content: "";
+  position: absolute;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--muted);
+  top: 3px;
+  left: 3px;
+  transition: transform 150ms ease, background 150ms ease;
+}
+
+.switch input:checked + .slider {
+  background: var(--accent-dim);
+  border-color: color-mix(in oklab, var(--accent) 45%, transparent);
+}
+
+.switch input:checked + .slider::after {
+  transform: translateX(18px);
+  background: var(--accent);
+}
+
+.hero-ip, .cell {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 10px 12px;
+}
+
+.kicker {
+  display: block;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--subtle);
+  font-weight: 600;
+}
+
+.ip {
+  margin-top: 4px;
+  font-family: var(--mono);
+  font-size: 18px;
+  letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums;
+}
+
+.ip-meta, .hint {
+  display: block;
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.grid.two {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.cell strong {
+  display: block;
+  margin-top: 4px;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.mono {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  font-weight: 500 !important;
+  font-size: 13px !important;
+}
+
+.pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.pills.wide { display: grid; grid-template-columns: 1fr 1fr; }
+
+.pills button {
+  appearance: none;
+  border: 1px solid var(--border);
+  background: var(--elevated);
+  color: var(--muted);
+  border-radius: 999px;
+  padding: 5px 8px;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.pills.wide button {
+  border-radius: 10px;
+  padding: 7px 8px;
+}
+
+.pills button.on {
+  color: var(--bg);
+  background: var(--accent);
+  border-color: transparent;
+  font-weight: 600;
+}
+
+.webrtc-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--subtle);
+}
+
+.dot.ok { background: var(--ok); }
+.dot.leak { background: var(--danger); }
+.dot.unknown { background: var(--warn); }
+
+.actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr auto;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.btn {
+  appearance: none;
+  border: 1px solid var(--border);
+  background: var(--elevated);
+  color: var(--fg);
+  border-radius: 10px;
+  height: 36px;
+  padding: 0 10px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.btn.primary {
+  background: var(--fg);
+  color: var(--bg);
+  border-color: transparent;
+}
+
+.btn.ghost {
+  background: transparent;
+}
+
+.btn:disabled { opacity: 0.5; cursor: default; }
+
+.error {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: color-mix(in oklab, var(--danger) 14%, var(--surface));
+  color: var(--danger);
+  font-size: 12px;
+}
+
+body.disabled .hero-ip,
+body.disabled .cell,
+body.disabled .grid {
+  opacity: 0.45;
+}

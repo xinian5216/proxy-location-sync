@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Proxy Location Sync 设置</title>
+    <link rel="stylesheet" href="options.css" />
+  </head>
+  <body>
+    <main>
+      <header>
+        <p class="eyebrow">Proxy Location Sync</p>
+        <h1>设置</h1>
+        <p class="lede">
+          扩展只检测浏览器当前实际公网出口 IP，不读取 v2rayN、Clash、sing-box
+          或其他代理软件的配置。语言不会被改成出口国家的语言。
+        </p>
+      </header>
+
+      <section class="card">
+        <h2>同步</h2>
+        <label class="row">
+          <span>
+            <strong>自动同步</strong>
+            <em>关闭后停止轮询，网页恢复真实地理位置与时区。</em>
+          </span>
+          <input type="checkbox" id="enabled" />
+        </label>
+        <div class="row wrap">
+          <span>
+            <strong>检测间隔</strong>
+            <em>仅检测 IP。地理信息只在出口 IP 变化后才会重新查询。</em>
+          </span>
+          <div class="pills" id="interval"></div>
+        </div>
+        <div class="row wrap">
+          <span>
+            <strong>定位模式</strong>
+            <em>随机偏移按 IP 稳定生成，同一出口不会每几秒换坐标。</em>
+          </span>
+          <div class="pills" id="mode">
+            <button type="button" data-mode="raw">IP 原始位置</button>
+            <button type="button" data-mode="jitter">城市随机偏移</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>WebRTC</h2>
+        <label class="row">
+          <span>
+            <strong>泄漏探测</strong>
+            <em>第一版只检测并提示，不会修改 WebRTC 策略。</em>
+          </span>
+          <input type="checkbox" id="webrtcProbe" />
+        </label>
+        <p class="note" id="webrtc-detail">尚未探测。</p>
+      </section>
+
+      <section class="card">
+        <h2>当前出口</h2>
+        <dl class="facts" id="facts"></dl>
+      </section>
+
+      <section class="card">
+        <h2>隐私</h2>
+        <ul>
+          <li>本地只保存出口 IP、位置、时区与设置。</li>
+          <li>不会读取浏览历史、Cookie、账号或页面内容。</li>
+          <li>向第三方发出的请求仅用于查询当前连接的 IP / 地理信息。</li>
+          <li>不修改 <code>navigator.language</code>。</li>
+        </ul>
+      </section>
+
+      <section class="card">
+        <h2>Chromium 限制（请读）</h2>
+        <ul>
+          <li><strong>能完全做到：</strong>MAIN world 覆盖 geolocation（含 watchPosition 推送）、Intl 默认时区、Date 本地时间方法；按 IP 缓存；多源地理 API 容错。</li>
+          <li><strong>近似做到：</strong>页面内联脚本在 document_start 仍可能短暂看到真实时区（通常数十毫秒内被纠正）。Web Worker / 页面自己的 Service Worker 收不到 content script。</li>
+          <li><strong>做不到：</strong>注入 chrome://、Edge 商店、PDF 查看器；在不使用 debugger 的前提下改浏览器界面时区；从 v2rayN 读取节点名。</li>
+        </ul>
+      </section>
+
+      <footer>
+        <button type="button" class="btn" id="detect">立即检测</button>
+        <button type="button" class="btn" id="resync">清除该 IP 缓存并重新同步</button>
+        <button type="button" class="btn danger" id="clear">清空全部缓存</button>
+      </footer>
+    </main>
+    <script src="options.js" type="module"></script>
+  </body>
+</html>

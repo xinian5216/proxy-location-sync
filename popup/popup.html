@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=360, initial-scale=1" />
+    <title>Proxy Location Sync</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <div class="shell">
+      <header class="top">
+        <div class="brand">
+          <span class="mark" aria-hidden="true"></span>
+          <div>
+            <h1>Proxy Location Sync</h1>
+            <p class="sub" id="sync-label">自动同步已开启</p>
+          </div>
+        </div>
+        <label class="switch" title="暂停自动同步（不会恢复系统定位）">
+          <input type="checkbox" id="enabled" />
+          <span class="slider"></span>
+        </label>
+      </header>
+
+      <p class="error" id="error" hidden></p>
+
+      <section class="hero-ip">
+        <span class="kicker" id="ip-kicker">当前公网 IP</span>
+        <div class="ip" id="ip">—</div>
+        <div class="ip-meta" id="ip-meta"></div>
+      </section>
+
+      <section class="grid two">
+        <div class="cell">
+          <span class="kicker">国家</span>
+          <strong id="country">—</strong>
+        </div>
+        <div class="cell">
+          <span class="kicker">城市</span>
+          <strong id="city">—</strong>
+        </div>
+      </section>
+
+      <section class="cell">
+        <span class="kicker">定位</span>
+        <strong class="mono" id="coords">—</strong>
+        <span class="hint" id="accuracy"></span>
+      </section>
+
+      <section class="cell">
+        <span class="kicker">Timezone</span>
+        <strong class="mono" id="timezone">—</strong>
+        <span class="hint" id="offset"></span>
+      </section>
+
+      <section class="grid two">
+        <div class="cell">
+          <span class="kicker">上次出口变化</span>
+          <strong id="changed">—</strong>
+        </div>
+        <div class="cell">
+          <span class="kicker">检测间隔</span>
+          <div class="pills" id="interval"></div>
+        </div>
+      </section>
+
+      <section class="cell">
+        <span class="kicker">定位模式</span>
+        <div class="pills wide" id="mode">
+          <button type="button" data-mode="raw">IP 原始位置</button>
+          <button type="button" data-mode="jitter">城市随机偏移</button>
+        </div>
+      </section>
+
+      <section class="cell webrtc">
+        <span class="kicker">WebRTC</span>
+        <div class="webrtc-row">
+          <span class="dot" id="webrtc-dot"></span>
+          <strong id="webrtc-status">未知</strong>
+        </div>
+        <span class="hint" id="webrtc-reason"></span>
+      </section>
+
+      <footer class="actions">
+        <button type="button" class="btn primary" id="detect">立即检测</button>
+        <button type="button" class="btn" id="resync">重新同步</button>
+        <button type="button" class="btn ghost" id="options">设置</button>
+      </footer>
+    </div>
+    <script src="popup.js" type="module"></script>
+  </body>
+</html>

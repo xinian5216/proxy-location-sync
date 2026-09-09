@@ -1,0 +1,60 @@
+{
+  "manifest_version": 3,
+  "name": "Proxy Location Sync",
+  "short_name": "ExitSync",
+  "version": "1.1.3",
+  "description": "Detect the browser’s real proxy exit IP and sync webpage geolocation + timezone to that location — without touching your proxy app.",
+  "minimum_chrome_version": "116",
+  "icons": {
+    "16": "icons/icon-16.png",
+    "32": "icons/icon-32.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  },
+  "action": {
+    "default_title": "Proxy Location Sync",
+    "default_popup": "popup/popup.html",
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "32": "icons/icon-32.png",
+      "48": "icons/icon-48.png"
+    }
+  },
+  "options_ui": {
+    "page": "options/options.html",
+    "open_in_tab": true
+  },
+  "background": {
+    "service_worker": "background/service-worker.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": ["http://*/*", "https://*/*"],
+      "js": ["content/isolated.js"],
+      "run_at": "document_start",
+      "all_frames": true,
+      "match_about_blank": true,
+      "match_origin_as_fallback": true,
+      "world": "ISOLATED"
+    },
+    {
+      "matches": ["http://*/*", "https://*/*"],
+      "js": ["content/injected.js"],
+      "run_at": "document_start",
+      "all_frames": true,
+      "match_about_blank": true,
+      "match_origin_as_fallback": true,
+      "world": "MAIN"
+    }
+  ],
+  "permissions": [
+    "storage",
+    "alarms",
+    "offscreen",
+    "scripting",
+    "webNavigation"
+  ],
+  "host_permissions": ["http://*/*", "https://*/*"],
+  "incognito": "spanning"
+}
