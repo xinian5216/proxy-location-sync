@@ -67,8 +67,8 @@
         <ul>
           <li>本地只保存出口 IP、位置、时区与设置。</li>
           <li>不会读取浏览历史、Cookie、账号或页面内容。</li>
-          <li>向第三方发出的请求仅用于查询当前连接的 IP / 地理信息。</li>
-          <li>不修改 <code>navigator.language</code>。</li>
+          <li>向第三方发出的请求仅用于查询当前连接的 IP / 地理信息 / DNS resolver 观测。</li>
+          <li>不修改 <code>navigator.language</code>、<code>User-Agent</code>、字体、Canvas 或 WebGL。</li>
         </ul>
       </section>
 
@@ -84,6 +84,7 @@
       <footer>
         <button type="button" class="btn" id="detect">立即检测</button>
         <button type="button" class="btn" id="resync">清除该 IP 缓存并重新同步</button>
+        <button type="button" class="btn" id="diagnostics">环境诊断</button>
         <button type="button" class="btn danger" id="clear">清空全部缓存</button>
       </footer>
     </main>

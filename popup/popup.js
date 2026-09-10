@@ -1,4 +1,5 @@
 import { INTERVAL_CHOICES, MSG } from "../lib/constants.js";
+import { statusMark, utcOffsetLabel } from "../lib/diagnostics.js";
 import { formatOffsetLabel, getOffsetMinutes } from "../lib/timezone.js";
 import { viewWebRtc } from "../lib/webrtc.js";
 
@@ -23,12 +24,15 @@ const ui = {
   webrtcDot: $("webrtc-dot"),
   webrtcStatus: $("webrtc-status"),
   webrtcReason: $("webrtc-reason"),
+  envOverall: $("env-overall"),
+  envList: $("env-list"),
+  diagnostics: $("diagnostics"),
   detect: $("detect"),
   resync: $("resync"),
   options: $("options"),
 };
 
-let snapshot = { settings: { enabled: true, intervalSec: 3, locationMode: "raw" }, state: null };
+let snapshot = { settings: { enabled: true, intervalSec: 3, locationMode: "raw" }, state: null, diagnostics: null };
 let clock = null;
 
 init();
@@ -51,11 +55,13 @@ async function init() {
   ui.detect.addEventListener("click", () => run(MSG.DETECT_NOW, ui.detect));
   ui.resync.addEventListener("click", () => run(MSG.RESYNC, ui.resync));
   ui.options.addEventListener("click", () => chrome.runtime.sendMessage({ type: MSG.OPEN_OPTIONS }));
+  ui.diagnostics.addEventListener("click", () => chrome.runtime.sendMessage({ type: MSG.OPEN_DIAGNOSTICS }));
 
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area !== "local") return;
     if (changes.state) snapshot.state = changes.state.newValue;
     if (changes.settings) snapshot.settings = { ...snapshot.settings, ...changes.settings.newValue };
+    if (changes.diagnostics) snapshot.diagnostics = changes.diagnostics.newValue;
     render();
   });
 
@@ -152,6 +158,7 @@ function render() {
 
   renderRelative();
   renderWebRtc(viewWebRtc(state));
+  renderEnv(snapshot.diagnostics, state);
 }
 
 function metaLine(state, pendingIp, committedIp, geoPending, switching, stale) {
@@ -183,6 +190,78 @@ function renderWebRtc(w) {
   ui.webrtcReason.textContent = (w && w.reason) || "";
 }
 
+function renderEnv(diag, state) {
+  if (!ui.envOverall || !ui.envList) return;
+  ui.envList.replaceChildren();
+  if (!diag || !diag.overall) {
+    ui.envOverall.textContent = "尚未诊断";
+    addEnvRow("info", "Language", (typeof navigator !== "undefined" && navigator.language) || "—");
+    return;
+  }
+  ui.envOverall.textContent = diag.overall.label || "—";
+  const net = diag.network || {};
+  if (net.switching) {
+    addEnvRow("pending", "Detected IP", net.detectedIp || net.ip);
+    addEnvRow("pending", "Synced Geo", net.committedGeoIp || "—");
+    addEnvRow(diag.geolocation && diag.geolocation.status, "Geolocation", (diag.geolocation && diag.geolocation.city) || "waiting");
+    addEnvRow("pending", "Last TZ", (diag.timezone && diag.timezone.expected) || "—");
+    addEnvRow(diag.webrtc && diag.webrtc.status, "WebRTC", webrtcCompact(diag.webrtc));
+    addEnvRow(diag.dns && diag.dns.status, "DNS", dnsSwitchingCompact(diag.dns));
+    addEnvRow("info", "Language", (diag.locale && diag.locale.language) || "—");
+    return;
+  }
+  const loc = [net.country, net.city].filter(Boolean).join(" / ");
+  addEnvRow(diag.network && diag.network.status, "IP Location", loc || (state && state.ip) || "—");
+  addEnvRow(diag.geolocation && diag.geolocation.status, "Geolocation", (diag.geolocation && diag.geolocation.city) || "—");
+  addEnvRow(diag.timezone && diag.timezone.status, "Timezone", (diag.timezone && (diag.timezone.intlTimezone || diag.timezone.expected)) || "—");
+  const off = diag.timezone && Number.isFinite(diag.timezone.utcOffset)
+    ? diag.timezone.utcOffset
+    : diag.timezone && diag.timezone.expectedOffset;
+  addEnvRow(diag.timezone && diag.timezone.status, "UTC Offset", utcOffsetLabel(off));
+  addEnvRow(diag.webrtc && diag.webrtc.status, "WebRTC", webrtcCompact(diag.webrtc));
+  addEnvRow(diag.dns && diag.dns.status, "DNS", dnsCompact(diag.dns));
+  addEnvRow("info", "Language", (diag.locale && diag.locale.language) || "—");
+}
+
+function addEnvRow(status, label, value) {
+  const li = document.createElement("li");
+  const st = status || "unknown";
+  li.className = `env-row ${st}`;
+  const mark = document.createElement("span");
+  mark.className = "mark";
+  mark.textContent = st === "info" ? "ℹ" : statusMark(st);
+  const lab = document.createElement("span");
+  lab.className = "lab";
+  lab.textContent = label;
+  const val = document.createElement("span");
+  val.className = "val";
+  val.textContent = value || "—";
+  li.append(mark, lab, val);
+  ui.envList.appendChild(li);
+}
+
+function webrtcCompact(w) {
+  if (!w) return "—";
+  if (w.status === "ok") return "OK";
+  if (w.status === "error") return "Possible leak";
+  return "Unknown";
+}
+
+function dnsCompact(d) {
+  if (!d) return "—";
+  if (d.status === "ok") return "OK";
+  if (d.status === "warning") return "Possible mismatch";
+  if (d.consistency === "public-dns") return "Public DNS";
+  return "Unknown";
+}
+
+function dnsSwitchingCompact(d) {
+  if (!d) return "—";
+  const ip = d.checkedForIp || "";
+  const kind = dnsCompact(d);
+  return ip ? `Checked for ${ip}` : kind;
+}
+
 function formatCoords(lat, lng) {
   if (!Number.isFinite(lat) || !Number.isFinite(lng)) return "—";
   return `${lat.toFixed(4)}, ${lng.toFixed(4)}`;
@@ -209,3 +288,5 @@ function relative(ts) {
   const hr = Math.floor(min / 60);
   return `${hr} 小时前`;
 }
+
+void clock;

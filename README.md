@@ -10,7 +10,7 @@ Detect the browser’s real public exit IP and sync webpage geolocation + timezo
 
 不读取 v2rayN、Clash、sing-box、NekoRay 的配置、节点名或进程。换代理软件只要浏览器流量仍走那个出口，扩展就能工作。
 
-**当前版本：1.1.4**
+**当前版本：1.2.2**
 
 | | |
 | --- | --- |
@@ -52,7 +52,13 @@ git clone https://github.com/xinian5216/proxy-location-sync.git
 
 也可以从 [Releases](https://github.com/xinian5216/proxy-location-sync/releases) 下载 `proxy-location-sync.zip`，解压后根目录必须能直接看到 `manifest.json`，再按上面步骤加载。
 
-从 1.1.3 升级：在 `chrome://extensions` **重新加载**本扩展。1.1.4 是审计修复：Echo persist 竞态（旧出口不得覆盖新出口）、Invalid Date 按目标时区本地午夜恢复、HTMLGeolocationElement invalid `error` 不再递归、EST/PST 等显式时区缩写保持绝对时间。不改 UI 风格、不加功能。
+从 1.2.1 升级：1.2.2 只修诊断层。同出口的自动诊断不得取消手动「重新诊断」；新出口仍可抢占正在跑的 manual。DNS resolver 必须是合法 IP 字面量（「Bad Gateway」不再被当成 IPv6）；0 个可用 resolver 会 fallback 下一个 Provider，全体失败走 60 秒 TTL。核心 IP / Geo / Date / WebRTC 未改。
+
+从 1.2.0 升级：在 `chrome://extensions` **重新加载**本扩展。1.2.1 只修诊断层：latest-run-wins、pending 出口与 committed Geo 分离、DNS 绑定最新 detected IP、resolver fingerprint、技术失败 60 秒短 TTL。核心 IP / Geo / Date / WebRTC 未改。
+
+从 1.1.4 升级：1.2.0 新增环境诊断（IP / Geo / Timezone / WebRTC / DNS 是否互相矛盾），不改核心同步逻辑，不伪装 language / UA / 字体 / Canvas / WebGL。
+
+从 1.1.3 升级：1.1.4 是审计修复：Echo persist 竞态（旧出口不得覆盖新出口）、Invalid Date 按目标时区本地午夜恢复、HTMLGeolocationElement invalid `error` 不再递归、EST/PST 等显式时区缩写保持绝对时间。
 
 ## 仓库结构
 
@@ -66,8 +72,8 @@ offscreen/                   # IP Echo 自调度 + WebRTC ICE 探测
 content/
   isolated.js                # chrome.storage → MAIN CustomEvent（不带 trusted）
   injected.js                # MAIN world：fail-closed geolocation / Date / Intl / Temporal.Now
-popup/  options/
-lib/
+popup/  options/  diagnostics/
+lib/                         # echo / geo / timezone / webrtc / diagnostics / dns
 tests/                       # node --test；含 frames.html
 icons/
 ```
@@ -88,7 +94,7 @@ node --test tests/*.test.js
 
 不要写成 `node --test extension/tests/*.test.js`——这个仓库根目录没有 `extension/` 这一层。
 
-当前 **160** 项测试。高风险行为（Date / HTMLGeolocation / 权限撤销）会用 Node `vm` **真正执行** `content/injected.js`，而不是只测 helper。
+当前 **212** 项测试。高风险行为（Date / HTMLGeolocation / 权限撤销）会用 Node `vm` **真正执行** `content/injected.js`，而不是只测 helper。环境诊断覆盖 IP/Geo/Timezone/DNS/WebRTC/locale/fonts/Worker 与隔离失败；1.2.1 另覆盖 latest-run-wins、pending vs committed、DNS fingerprint / TTL。1.2.2 另覆盖 manual vs auto 优先级、严格 DNS IP 字面量、0 resolver fallback。
 
 CI：每次 push / pull request 跑同一套测试。
 
@@ -96,11 +102,11 @@ CI：每次 push / pull request 跑同一套测试。
 
 | 权限 | 用途 |
 | --- | --- |
-| `storage` | 设置、当前出口、按 IP 的地理缓存 |
-| `alarms` | 每分钟唤醒 service worker |
+| `storage` | 设置、当前出口、按 IP 的地理缓存、诊断结果 |
+| `alarms` | 每分钟唤醒 service worker；约 15 分钟刷新 DNS 诊断 |
 | `offscreen` | 短间隔轮询 + WebRTC ICE 探测 |
 | `scripting` + `webNavigation` | 导航提交时把当前状态注入 MAIN world |
-| `host_permissions: http(s)://*/*` | 请求 IP/地理接口；向网页注入脚本 |
+| `host_permissions: http(s)://*/*` | 请求 IP/地理/DNS 观测接口；向网页注入脚本 |
 
 **没有** `tabs`、`debugger`、`privacy`。不会出现「正在调试此浏览器」。不读历史、Cookie、账号。角标走 `chrome.action`。向已打开标签页推送状态时用 `chrome.tabs.query({})` 取 tabId（不读 title/url/favicon），**不申请** `tabs` 权限。SW 重启后仍能找到旧标签。
 
@@ -228,6 +234,67 @@ IP 变化后，无论地理来自缓存命中还是新查询，都会把 WebRTC 
 - **全局代理 / 所有浏览器流量统一出口：** 效果最符合预期。
 - **复杂分流：** 只能根据探测 Provider 的出口推断全局位置，不能保证每个目标网站实际网络出口都相同。
 
+**不要声称「检测 IP 就等于所有网站实际出口」。** 全局代理 / 浏览器流量统一出口时最准确。PAC、v2rayN 分流、Clash Rule、sing-box route 下，Echo、Claude、Google 可能各走一条路。扩展无法只通过普通网页 JS 知道某个远端服务器看到的源 IP，除非那个站点自己返回。
+
+## 环境诊断（1.2.2）
+
+目标不是给浏览器打「像不像日本人」的分数，而是判断模块之间**是否互相矛盾**。
+
+诊断使用 **优先级队列**，不是盲目 latest-run-wins：
+
+- **新 detected 出口**永远优先（manual A 正在跑、出口变成 B → abort A，诊断 B）
+- **手动「重新诊断」**高于同出口的自动 keepalive / alarm / state-change。auto 会跳过或 coalesce 到当前 manual，**不得取消用户刷新**
+- 第二次手动点击可以替换第一次
+- run 结束后只有 `activeRun === myRun` 才清空，避免 abort 已经完成的任务
+
+Network 显示 **detected exit**（`pendingIp || ip`）。Geo 尚未 commit 时：
+
+- Public IP = 新出口 B
+- 已同步定位仍标明属于 A
+- DNS `checkedForIp` = B
+- 不会把 A 的国家 / 城市 / 时区套到 B 上
+
+| 模块 | 何时 ok / warning / error |
+| --- | --- |
+| IP / Geo | Haversine：raw 0–10 km ok，10–100 km warning，更远或跨国家 error。城市级精度（≥5 km）放宽到 50 / 200 km，十几公里不是红灯 |
+| Timezone | IANA + 当前 offset。名称不同但 offset 相同（如 New York / Toronto）→ warning。Tokyo vs Shanghai → error。A→B pending 时保留上次虚拟时区并标明等待新地理 |
+| WebRTC | 与当前逻辑一致：不同公网 IP → error；证据不足 → unknown |
+| DNS | 中国大陆 ISP（Telecom / Unicom / Mobile）配非 CN 出口 → warning。Cloudflare / Google / Quad9 / NextDNS 等 anycast → unknown，**不直接判泄漏** |
+| Locale / 字体 / UA | **只读。** zh-CN、微软雅黑、Windows 都是信息，不是 error |
+| Patch 自检 | **best-effort。** 必须探测已打开的 **http(s)** 页。扩展页 `chrome-extension://` 不受 MAIN world patch，不能用来自检。普通脚本覆盖 / 注入失败可以检测；恶意页面伪造 `PAGE_ENV` 可能欺骗该项。**不是安全证明** |
+| Worker | 网页 Worker 收不到 content script。MAIN 与 Worker 时区不一致 → warning（已知限制，不是产品缺陷） |
+
+总结只用解释型结果：**Good** / **Needs attention**（切换中为 **Switching**），不发明安全分。
+
+弹窗 compact Environment 与「详细诊断」。完整页 `diagnostics/diagnostics.html`，按钮「重新诊断」会刷新 IP 一致性、Geo、Timezone、WebRTC、DNS、Locale（不改代理、不改浏览器设置）。
+
+诊断与核心同步隔离：DNS 超时、字体探测异常、Worker 失败、诊断 abort 都**不会**中断 IP 轮询、Geo 同步、Timezone 或 watchPosition。
+
+### DNS Provider（隐私）
+
+Chrome 扩展读不到操作系统全部 DNS resolver 设置，因此用外部观测。
+
+这些是**第三方诊断服务**，接口未来可能变化。失败时显示 unknown，**绝不能影响核心代理同步**。不要再随意增加大量 Provider。
+
+| Provider | 用途 | 频率 |
+| --- | --- | --- |
+| [bash.ws](https://bash.ws) | 一次性子域解析，观测 resolver IP / ASN / 国家 | 启动、detected 出口变化、手动重新诊断；成功约 15 分钟；技术失败约 60 秒 |
+| [ipleak.net](https://ipleak.net) | 同上，bash.ws 失败时 fallback | 同上 |
+
+- 不发送网页 URL
+- 不发送浏览历史
+- 不发送 Cookie
+- 不发送账号信息
+- 超时 / 429 / 无效 JSON / 无法解析的正文（如 `Bad Gateway` HTML）会换源或记 unknown
+- resolver IP 必须通过 **严格字面量校验**（合法 IPv4 / 压缩 IPv6 / IPv4-mapped IPv6）。不会从 HTML 里摸一段 hex 当 IP
+- 某 Provider 返回 0 个可用 resolver → 记失败并 **fallback** 下一个；全部失败才是 technical failure
+- **成功观测**（含 public-dns unknown）缓存 **15 分钟**
+- **技术失败**（超时、HTTP 错误、全源冷却、无效 JSON、0 个合法 resolver、无法解析的正文）短 TTL **60 秒**，不必等 15 分钟
+- 出口 IP 变化（含 pendingIp）立即失效；手动重新诊断 force refresh
+- DNS fingerprint 含稳定排序后的 resolver IP / country / org；仅顺序变化不写 storage
+
+这不是 Anti-Detect Browser。不会改 `navigator.language`、User-Agent / UA-CH、字体、Canvas、WebGL，也不会做「Claude 专用安全模式」。
+
 ## Offscreen
 
 - 理由是诚实的 `WEB_RTC`（确实做 ICE 探测）
@@ -298,6 +365,9 @@ new Date(2026, 0, 15, 12, 0, 0).toString()
 
 **WebRTC**  
 [browserleaks.com/webrtc](https://browserleaks.com/webrtc)。若出现与出口不同的公网 IP 或清晰局域网 IP，弹窗为「可能泄漏」。没有候选则为「未知」。切出口后应先变未知再出新结果。
+
+**环境诊断**  
+弹窗 Environment：矛盾为 Needs attention，zh-CN 只显示信息。打开「详细诊断」看 DNS resolver 与 Worker 限制。扩展页本身的 Intl 不是网页环境。
 
 ## 能做到 / 近似 / 做不到
 

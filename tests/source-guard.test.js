@@ -19,8 +19,8 @@ describe("source guards (no leak / no fake / no extra perms)", () => {
   const pipeline = read("lib/exit-pipeline.js");
   const timezone = read("lib/timezone.js");
 
-  test("manifest 1.1.4, no tabs permission, min Chrome 116", () => {
-    assert.equal(manifest.version, "1.1.4");
+  test("manifest 1.2.2, no tabs permission, min Chrome 116", () => {
+    assert.equal(manifest.version, "1.2.2");
     assert.equal(manifest.minimum_chrome_version, "116");
     assert.deepEqual(manifest.permissions.sort(), [
       "alarms",
@@ -86,9 +86,11 @@ describe("source guards (no leak / no fake / no extra perms)", () => {
     assert.match(offscreen, /nextPollDelayMs/);
   });
 
-  test("isolated world only bridges storage → CustomEvent", () => {
+  test("isolated world bridges storage and PAGE_ENV probe, no chrome.tabs", () => {
     assert.doesNotMatch(isolated, /chrome\.tabs\./);
     assert.match(isolated, /CustomEvent/);
+    assert.match(isolated, /PAGE_ENV_PROBE/);
+    assert.match(isolated, /PROBE/);
   });
 
   test("service worker uses exit pipeline, lookupGeo(targetIp), tabs.query", () => {
@@ -98,8 +100,19 @@ describe("source guards (no leak / no fake / no extra perms)", () => {
     assert.match(sw, /chrome\.tabs\.query/);
     assert.match(sw, /collectTabIds/);
     assert.match(sw, /nextPollDelayMs/);
+    assert.match(sw, /createDiagnosticsController/);
+    assert.match(sw, /scheduleDiagnostics/);
+    assert.match(sw, /runDiagnosticsSafe/);
     assert.doesNotMatch(sw, /STATE_PUSH/);
     assert.doesNotMatch(sw, /tab\.title|favIconUrl/);
+  });
+
+  test("13. duplicate startFallback removed", () => {
+    const startFallback = sw.match(/if \(action\.startFallback\) startSwFallback\(\);/g) || [];
+    assert.equal(startFallback.length, 1);
+    const apply = sw.match(/function applyPoller\(action\) \{[\s\S]*?\n\}/);
+    assert.ok(apply);
+    assert.equal((apply[0].match(/startSwFallback\(\)/g) || []).length, 1);
   });
 
   test("ip echo prefers api64; timezone uses Intl not slash heuristic", () => {
@@ -119,5 +132,49 @@ describe("source guards (no leak / no fake / no extra perms)", () => {
     assert.doesNotMatch(injected, /isValid === false\) return el\.error/);
     assert.match(injected, /EST\|EDT\|CST\|CDT\|MST\|MDT\|PST\|PDT/);
     assert.match(timezone, /EST\|EDT\|CST\|CDT\|MST\|MDT\|PST\|PDT/);
+  });
+
+  test("1.2.1 diagnostics latest-run-wins; no language / UA / font / canvas / WebGL spoof", () => {
+    const diagnostics = read("lib/diagnostics.js");
+    const dns = read("lib/dns-providers.js");
+    const runner = read("lib/diagnostics-runner.js");
+    const popup = read("popup/popup.html");
+    const diagPage = read("diagnostics/diagnostics.html");
+    assert.match(diagnostics, /evaluateDns/);
+    assert.match(diagnostics, /zh-CN/);
+    assert.match(diagnostics, /detectedExitIp/);
+    assert.match(diagnostics, /committedGeoIp/);
+    assert.match(diagnostics, /stableDnsResolvers/);
+    assert.match(dns, /bash\.ws/);
+    assert.match(dns, /ipleak\.net/);
+    assert.match(runner, /dnsCacheValid/);
+    assert.match(runner, /runIsolated/);
+    assert.match(runner, /diagnosticsGeneration/);
+    assert.match(runner, /AbortController/);
+    assert.match(runner, /diagnosticsShouldSupersede/);
+    assert.match(runner, /activeRun/);
+    assert.match(runner, /normalizeDiagnosticsReason/);
+    assert.match(dns, /isValidIpLiteral/);
+    assert.match(dns, /parseIpleakDetectionBody/);
+    assert.match(dns, /no usable DNS resolvers/);
+    assert.match(sw, /reason: "manual"/);
+    assert.doesNotMatch(dns, /\[0-9a-f:\]\+/i);
+    assert.match(popup, /详细诊断/);
+    assert.match(diagPage, /best-effort/);
+    assert.match(injected, /type === "PROBE"/);
+    assert.match(injected, /PAGE_ENV/);
+    const replyIdx = injected.indexOf("function replyPageEnv");
+    const endIdx = injected.indexOf("function hookPermissionStatus");
+    assert.ok(replyIdx > 0 && endIdx > replyIdx);
+    const slice = injected.slice(replyIdx, endIdx);
+    assert.doesNotMatch(slice, /native\.getCurrentPosition/);
+    assert.doesNotMatch(injected, /navigator\.language\s*=/);
+    assert.doesNotMatch(injected, /navigator\.userAgent\s*=/);
+    assert.doesNotMatch(injected, /userAgentData\s*=/);
+    assert.doesNotMatch(injected, /toDataURL/);
+    assert.doesNotMatch(injected, /WebGLRenderingContext/);
+    assert.doesNotMatch(injected, /measureText/);
+    assert.doesNotMatch(injected, /CanvasRenderingContext2D/);
+    assert.doesNotMatch(sw, /navigator\.language\s*=/);
   });
 });

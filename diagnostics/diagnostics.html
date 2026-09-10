@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>环境诊断 · Proxy Location Sync</title>
+    <link rel="stylesheet" href="diagnostics.css" />
+  </head>
+  <body>
+    <main>
+      <header>
+        <p class="eyebrow">Proxy Location Sync</p>
+        <h1>环境诊断</h1>
+        <p class="lede">
+          判断 IP / Geo / Timezone / WebRTC / DNS / Locale 是否互相矛盾。
+          中文语言、中文字体、Windows 都不是泄漏。本页是扩展页，Intl 不受 MAIN world patch；
+          网页环境来自已打开的 http(s) 标签。Patch 自检是 best-effort，不是安全证明。
+        </p>
+        <p class="overall" id="overall">尚未诊断</p>
+        <p class="note" id="summary"></p>
+      </header>
+
+      <section class="card">
+        <h2>Network</h2>
+        <dl class="facts" id="net-facts"></dl>
+      </section>
+
+      <section class="card">
+        <h2>Location</h2>
+        <dl class="facts" id="geo-facts"></dl>
+      </section>
+
+      <section class="card">
+        <h2>Timezone</h2>
+        <dl class="facts" id="tz-facts"></dl>
+      </section>
+
+      <section class="card">
+        <h2>WebRTC</h2>
+        <dl class="facts" id="rtc-facts"></dl>
+      </section>
+
+      <section class="card">
+        <h2>DNS</h2>
+        <dl class="facts" id="dns-facts"></dl>
+        <p class="note">
+          DNS 探测使用第三方服务 bash.ws 与 ipleak.net（接口可能变化；失败显示 unknown，不影响核心同步）。
+          成功结果缓存约 15 分钟；超时 / 全源失败约 60 秒后可重试。出口 IP 变化立即失效。
+          不发送网页 URL、浏览历史、Cookie 或账号。Cloudflare / Google / Quad9 / NextDNS 等全球公共 DNS 无法仅凭地区判断泄漏。
+        </p>
+      </section>
+
+      <section class="card">
+        <h2>Browser Environment</h2>
+        <dl class="facts" id="env-facts"></dl>
+        <p class="note">只读。不修改 language / UA / UA-CH / 字体。</p>
+      </section>
+
+      <section class="card">
+        <h2>Advanced</h2>
+        <dl class="facts" id="adv-facts"></dl>
+        <p class="note">
+          Canvas / WebGL 只读展示可用性，不注入噪声或伪装 vendor。Worker 不一致是扩展方案的已知限制，不是产品缺陷。
+          Patch 自检是 best-effort：普通脚本覆盖 / 注入失败可以检测；恶意页面伪造 PAGE_ENV 可能欺骗该项。不是安全证明。
+        </p>
+      </section>
+
+      <footer>
+        <button type="button" class="btn primary" id="rerun">重新诊断</button>
+        <button type="button" class="btn" id="options">设置</button>
+      </footer>
+    </main>
+    <script src="diagnostics.js" type="module"></script>
+  </body>
+</html>

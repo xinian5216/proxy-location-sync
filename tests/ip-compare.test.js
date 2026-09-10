@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
-import { canonicalizeIp, ipsEqual, isPublicIp } from "../lib/ip-compare.js";
+import { canonicalizeIp, ipsEqual, isPublicIp, isPublicResolverIp, isValidIpLiteral } from "../lib/ip-compare.js";
 import { applyLocationMode } from "../lib/geo.js";
 import { DEFAULT_SETTINGS } from "../lib/constants.js";
 import { createProviderHealth } from "../lib/provider-health.js";
@@ -34,6 +34,19 @@ describe("IP compare", () => {
     assert.equal(isPublicIp("2001:db8::1"), true);
     assert.equal(isPublicIp("fe80::1"), false);
     assert.equal(isPublicIp("::1"), false);
+  });
+
+  test("isValidIpLiteral rejects HTML / words / out-of-range IPv4", () => {
+    assert.equal(isValidIpLiteral("Bad"), false);
+    assert.equal(isValidIpLiteral("Bad Gateway"), false);
+    assert.equal(isValidIpLiteral("abcdef"), false);
+    assert.equal(isValidIpLiteral("999.999.999.999"), false);
+    assert.equal(isValidIpLiteral("1.2.3"), false);
+    assert.equal(isValidIpLiteral(""), false);
+    assert.equal(isValidIpLiteral("8.8.8.8"), true);
+    assert.equal(isValidIpLiteral("2001:4860:4860::8888"), true);
+    assert.equal(isPublicResolverIp("8.8.8.8"), true);
+    assert.equal(isPublicResolverIp("Bad"), false);
   });
 });
 

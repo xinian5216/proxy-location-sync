@@ -3,14 +3,20 @@
  *
  * IP Echo 快速 ACK；Geo lookup 是独立可取消任务。
  * 同 IP 心跳不写 chrome.storage.local。
+ * 诊断与核心同步隔离：失败只写 unknown，绝不 await 进 persistFromPipeline。
  */
 
 import {
+  ALARM_DNS,
   ALARM_KEEPALIVE,
   DEFAULT_SETTINGS,
+  DNS_ALARM_MINUTES,
   MSG,
   STORAGE_KEYS,
 } from "../lib/constants.js";
+import { collectBrowserEnvironment } from "../lib/diagnostics.js";
+import { createDiagnosticsController } from "../lib/diagnostics-runner.js";
+import { createDnsProbe } from "../lib/dns-providers.js";
 import { createExitPipeline } from "../lib/exit-pipeline.js";
 import { applyLocationMode } from "../lib/geo.js";
 import { lookupGeo } from "../lib/geo-providers.js";
@@ -21,6 +27,7 @@ import { createPollerSupervisor } from "../lib/poller-mode.js";
 import { collectTabIds } from "../lib/tab-targets.js";
 
 const OFFSCREEN_URL = "offscreen/offscreen.html";
+const DIAGNOSTICS_URL = "diagnostics/diagnostics.html";
 
 const poller = createPollerSupervisor();
 let creatingOffscreen = null;
@@ -32,6 +39,13 @@ const pipeline = createExitPipeline({
   lookupGeo,
   persist: persistFromPipeline,
   probeWebrtc: (ip) => tellOffscreen({ type: MSG.OFFSCREEN_WEBRTC, ip }),
+});
+
+const dnsProbe = createDnsProbe();
+const diagnosticsCtrl = createDiagnosticsController({
+  lookupDns: (opts) => dnsProbe.lookup(opts),
+  persist: persistDiagnostics,
+  probePage: probeHttpPageEnv,
 });
 
 chrome.runtime.onInstalled.addListener(() => {
@@ -46,6 +60,7 @@ self.addEventListener("activate", () => {
 
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === ALARM_KEEPALIVE) void onKeepAlive();
+  if (alarm.name === ALARM_DNS) void runDiagnosticsSafe({ force: false, reason: "auto" });
 });
 
 chrome.webNavigation.onCommitted.addListener((details) => {
@@ -83,12 +98,59 @@ async function persistFromPipeline({ state, geoCache }) {
   if (Object.keys(payload).length) await chrome.storage.local.set(payload);
   const snap = pipeline.snapshot();
   await refreshAction(snap.state, snap.settings);
+  scheduleDiagnostics("state-change");
+}
+
+function scheduleDiagnostics(reason = "auto") {
+  void runDiagnosticsSafe({ force: false, reason });
+}
+
+async function persistDiagnostics(diag) {
+  await chrome.storage.local.set({ [STORAGE_KEYS.diagnostics]: diag });
+}
+
+async function runDiagnosticsSafe({ force = false, reason, locale, environment } = {}) {
+  try {
+    const snap = pipeline.snapshot();
+    const local = collectBrowserEnvironment();
+    await diagnosticsCtrl.run({
+      state: snap.state,
+      settings: snap.settings,
+      locale: locale || local.locale,
+      environment: environment || local.environment,
+      force,
+      reason: reason || (force ? "manual" : "auto"),
+    });
+  } catch {
+    /* 诊断挂掉不得影响 IP / Geo / Timezone */
+  }
+}
+
+async function probeHttpPageEnv() {
+  let tabs = [];
+  try {
+    tabs = await chrome.tabs.query({ url: ["http://*/*", "https://*/*"] });
+  } catch {
+    return null;
+  }
+  const ordered = [...tabs.filter((t) => t.active), ...tabs.filter((t) => !t.active)];
+  for (const tab of ordered) {
+    if (typeof tab.id !== "number") continue;
+    try {
+      const res = await chrome.tabs.sendMessage(tab.id, { type: MSG.PAGE_ENV_PROBE }, { frameId: 0 });
+      if (res && res.env) return res.env;
+    } catch {
+      /* 该标签没有 content script */
+    }
+  }
+  return null;
 }
 
 async function boot(reason) {
   await ensureDefaults();
   await hydrateFromStorage();
   await chrome.alarms.create(ALARM_KEEPALIVE, { periodInMinutes: 1 });
+  await chrome.alarms.create(ALARM_DNS, { periodInMinutes: DNS_ALARM_MINUTES });
   const { settings } = pipeline.snapshot();
   if (settings.enabled) {
     await startPolling(settings);
@@ -96,6 +158,7 @@ async function boot(reason) {
   } else {
     await stopBackgroundWork();
   }
+  scheduleDiagnostics("auto");
 }
 
 async function hydrateFromStorage() {
@@ -103,18 +166,25 @@ async function hydrateFromStorage() {
     STORAGE_KEYS.settings,
     STORAGE_KEYS.state,
     STORAGE_KEYS.geoCache,
+    STORAGE_KEYS.diagnostics,
   ]);
   pipeline.hydrate({
     settings: { ...DEFAULT_SETTINGS, ...(data[STORAGE_KEYS.settings] || {}) },
     state: data[STORAGE_KEYS.state] || null,
     geoCache: data[STORAGE_KEYS.geoCache] || {},
   });
+  diagnosticsCtrl.hydrate(data[STORAGE_KEYS.diagnostics] || null);
 }
 
 async function onKeepAlive() {
   const { settings } = pipeline.snapshot();
   if (!settings.enabled) return;
   await startPolling(settings);
+  const snap = pipeline.snapshot();
+  const detected = (snap.state && (snap.state.pendingIp || snap.state.ip)) || "";
+  if (detected && diagnosticsCtrl.dnsNeedsRefresh(detected, false)) {
+    scheduleDiagnostics("auto");
+  }
 }
 
 async function onSettingsChanged(next) {
@@ -177,6 +247,19 @@ async function handleMessage(message) {
   if (type === MSG.OPEN_OPTIONS) {
     await chrome.runtime.openOptionsPage();
     return { ok: true };
+  }
+  if (type === MSG.OPEN_DIAGNOSTICS) {
+    await chrome.tabs.create({ url: chrome.runtime.getURL(DIAGNOSTICS_URL) });
+    return { ok: true };
+  }
+  if (type === MSG.DIAGNOSTICS_RUN) {
+    await runDiagnosticsSafe({
+      force: true,
+      reason: "manual",
+      locale: message.locale,
+      environment: message.environment,
+    });
+    return getSnapshot();
   }
   return { ok: false, error: "unknown message" };
 }
@@ -261,6 +344,7 @@ async function patchSettings(patch) {
     pipeline.hydrate({ settings, state, geoCache });
     await chrome.storage.local.set({ [STORAGE_KEYS.state]: state, [STORAGE_KEYS.geoCache]: geoCache });
     await refreshAction(state, settings);
+    void key;
   }
 
   if (settings.enabled) {
@@ -271,6 +355,7 @@ async function patchSettings(patch) {
   if (enabledFlipped) {
     await pushToOpenPages(await getSnapshot());
   }
+  scheduleDiagnostics("auto");
   return getSnapshot();
 }
 
@@ -280,6 +365,7 @@ async function getSnapshot() {
     settings: snap.settings,
     state: snap.state,
     geoCache: snap.geoCache,
+    diagnostics: diagnosticsCtrl.snapshot(),
   };
 }
 

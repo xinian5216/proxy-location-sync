@@ -1,7 +1,7 @@
 {
   "name": "proxy-location-sync",
   "private": true,
-  "version": "1.1.4",
+  "version": "1.2.2",
   "type": "module",
   "description": "Chrome/Edge MV3 extension: detect the browser’s real proxy exit IP and sync webpage geolocation + timezone to that location.",
   "license": "MIT",

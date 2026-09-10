@@ -24,6 +24,7 @@ async function init() {
   $("webrtcProbe").addEventListener("change", () => patch({ webrtcProbe: $("webrtcProbe").checked }));
   $("detect").addEventListener("click", () => chrome.runtime.sendMessage({ type: MSG.DETECT_NOW }).then(apply));
   $("resync").addEventListener("click", () => chrome.runtime.sendMessage({ type: MSG.RESYNC }).then(apply));
+  $("diagnostics").addEventListener("click", () => chrome.runtime.sendMessage({ type: MSG.OPEN_DIAGNOSTICS }));
   $("clear").addEventListener("click", async () => {
     await chrome.storage.local.set({ [STORAGE_KEYS.geoCache]: {} });
     apply(await chrome.runtime.sendMessage({ type: MSG.RESYNC }));

@@ -150,7 +150,89 @@
   window.addEventListener(EVENT, (ev) => {
     const detail = ev && ev.detail;
     if (detail && detail.type === "STATE") applyPayload(detail);
+    if (detail && detail.type === "PROBE") replyPageEnv();
   });
+
+  function isPatchAlive() {
+    try {
+      if (Intl.DateTimeFormat !== native.DTF) return true;
+    } catch { /* ignore */ }
+    try {
+      if (dateProto.getTimezoneOffset !== nativeDate.getTimezoneOffset) return true;
+    } catch { /* ignore */ }
+    try {
+      const proto = (typeof Geolocation === "function" && Geolocation.prototype) ||
+        (navigator.geolocation && Object.getPrototypeOf(navigator.geolocation));
+      if (proto && proto.getCurrentPosition && proto.getCurrentPosition !== native.getCurrentPosition) return true;
+    } catch { /* ignore */ }
+    return false;
+  }
+
+  function probeWorker() {
+    return new Promise((resolve) => {
+      try {
+        if (typeof Worker !== "function" || typeof Blob !== "function" || typeof URL === "undefined") {
+          resolve({ ok: false, reason: "Worker unavailable" });
+          return;
+        }
+        const src =
+          "self.onmessage=function(){try{self.postMessage({ok:true,timezone:Intl.DateTimeFormat().resolvedOptions().timeZone,offsetMin:new Date().getTimezoneOffset(),language:navigator.language||\"\"});}catch(e){self.postMessage({ok:false,reason:String(e)});}};";
+        const blob = new Blob([src], { type: "text/javascript" });
+        const url = URL.createObjectURL(blob);
+        const w = new Worker(url);
+        const timer = setTimeout(() => {
+          try { w.terminate(); } catch { /* ignore */ }
+          try { URL.revokeObjectURL(url); } catch { /* ignore */ }
+          resolve({ ok: false, reason: "worker timeout" });
+        }, 1500);
+        w.onmessage = function (ev) {
+          clearTimeout(timer);
+          try { w.terminate(); } catch { /* ignore */ }
+          try { URL.revokeObjectURL(url); } catch { /* ignore */ }
+          resolve(ev && ev.data ? ev.data : { ok: false });
+        };
+        w.onerror = function () {
+          clearTimeout(timer);
+          try { w.terminate(); } catch { /* ignore */ }
+          try { URL.revokeObjectURL(url); } catch { /* ignore */ }
+          resolve({ ok: false, reason: "worker error" });
+        };
+        w.postMessage("probe");
+      } catch (err) {
+        resolve({ ok: false, reason: String(err && err.message ? err.message : err) });
+      }
+    });
+  }
+
+  function replyPageEnv() {
+    const payload = {
+      type: "PAGE_ENV",
+      timezone: "",
+      offsetMin: Number.NaN,
+      locale: "",
+      language: navigator.language || "",
+      languages: Array.prototype.slice.call(navigator.languages || []),
+      geoMode: geoMode(),
+      htmlGeo: typeof HTMLGeolocationElement === "function",
+      patchAlive: isPatchAlive(),
+      latitude: state && state.latitude,
+      longitude: state && state.longitude,
+    };
+    try {
+      const opt = Intl.DateTimeFormat().resolvedOptions();
+      payload.timezone = opt.timeZone || "";
+      payload.locale = opt.locale || "";
+    } catch { /* ignore */ }
+    try {
+      payload.offsetMin = new Date().getTimezoneOffset();
+    } catch { /* ignore */ }
+    probeWorker().then(function (worker) {
+      payload.worker = worker;
+      try {
+        window.dispatchEvent(new CustomEvent(EVENT, { detail: payload }));
+      } catch { /* ignore */ }
+    });
+  }
 
   function hookPermissionStatus(st) {
     if (!st || permHooked) {
