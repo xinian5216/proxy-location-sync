@@ -77,6 +77,7 @@
   let lastEmittedKey = "";
   let prevMode = "pending";
   let htmlGeoPatched = false;
+  let nativeHtmlGeoErrorDescriptor = null;
   let permStatus = null;
   let permHooked = false;
 
@@ -633,6 +634,7 @@
     const t = String(s).trim().replace(/\s+\([^)]*\)$/, "");
     if (/(?:[zZ]|[+-]\d{2}:?\d{2})$/.test(t)) return true;
     if (/\b(?:GMT|UTC)\b/i.test(t)) return true;
+    if (/\b(?:EST|EDT|CST|CDT|MST|MDT|PST|PDT)\b/i.test(t)) return true;
     return false;
   }
 
@@ -743,14 +745,13 @@
     }
     let base;
     if (invalid(date)) {
-      const p = tzParts(new native.Date(0));
       base = {
-        year: p.year,
-        month: p.month,
-        day: p.day,
-        hour: p.hour,
-        minute: p.minute,
-        second: p.second,
+        year: year,
+        month: 1,
+        day: 1,
+        hour: 0,
+        minute: 0,
+        second: 0,
         ms: 0,
       };
     } else {
@@ -962,6 +963,27 @@
     return elementPermission(el) === "granted";
   }
 
+  function readNativeHtmlGeoError(el) {
+    try {
+      const get = nativeHtmlGeoErrorDescriptor && nativeHtmlGeoErrorDescriptor.get;
+      if (typeof get === "function") return get.call(el);
+    } catch {
+      /* ignore */
+    }
+    return null;
+  }
+
+  function htmlGeoErrorValue(el) {
+    if (!el) return null;
+    const perm = elementPermission(el);
+    if (perm === "denied" && el.isValid !== false) {
+      return makeError(1, "User denied Geolocation");
+    }
+    if (el.isValid === false) return readNativeHtmlGeoError(el);
+    if (perm !== "granted") return null;
+    return geoMode() === "error" ? makeError(2, "Position unavailable") : null;
+  }
+
   function wrapGeoElementInstance(el) {
     if (!el || geoElements.has(el)) return;
     const rec = { activated: false, oneShotDone: false };
@@ -983,13 +1005,7 @@
         configurable: true,
         enumerable: true,
         get() {
-          const perm = elementPermission(el);
-          if (perm === "denied" && el.isValid !== false) {
-            return makeError(1, "User denied Geolocation");
-          }
-          if (el.isValid === false) return el.error || null;
-          if (perm !== "granted") return null;
-          return geoMode() === "error" ? makeError(2, "Position unavailable") : null;
+          return htmlGeoErrorValue(el);
         },
       });
     } catch {
@@ -1045,8 +1061,8 @@
     const Ctor = globalThis.HTMLGeolocationElement;
     if (typeof Ctor === "function" && Ctor.prototype) {
       const proto = Ctor.prototype;
-      const posDesc = Object.getOwnPropertyDescriptor(proto, "position");
       const errDesc = Object.getOwnPropertyDescriptor(proto, "error");
+      nativeHtmlGeoErrorDescriptor = errDesc || nativeHtmlGeoErrorDescriptor;
       try {
         Object.defineProperty(proto, "position", {
           configurable: true,
@@ -1068,16 +1084,7 @@
           enumerable: true,
           get() {
             wrapGeoElementInstance(this);
-            const perm = elementPermission(this);
-            if (perm === "denied" && this.isValid !== false) {
-              return makeError(1, "User denied Geolocation");
-            }
-            if (this.isValid === false) {
-              return errDesc && typeof errDesc.get === "function" ? errDesc.get.call(this) : null;
-            }
-            if (perm !== "granted") return null;
-            if (geoMode() === "error") return makeError(2, "Position unavailable");
-            return null;
+            return htmlGeoErrorValue(this);
           },
         });
       } catch {

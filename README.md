@@ -10,7 +10,7 @@ Detect the browser’s real public exit IP and sync webpage geolocation + timezo
 
 不读取 v2rayN、Clash、sing-box、NekoRay 的配置、节点名或进程。换代理软件只要浏览器流量仍走那个出口，扩展就能工作。
 
-**当前版本：1.1.3**
+**当前版本：1.1.4**
 
 | | |
 | --- | --- |
@@ -52,7 +52,7 @@ git clone https://github.com/xinian5216/proxy-location-sync.git
 
 也可以从 [Releases](https://github.com/xinian5216/proxy-location-sync/releases) 下载 `proxy-location-sync.zip`，解压后根目录必须能直接看到 `manifest.json`，再按上面步骤加载。
 
-从 1.1.0 / 1.1.2 升级：在 `chrome://extensions` **重新加载**本扩展。1.1.3 是稳定性修复：IP 探测与 Geo 查询解耦、同 IP 心跳不再写 storage，并修正 Date / 权限语义。不改 UI 风格、不加功能。
+从 1.1.3 升级：在 `chrome://extensions` **重新加载**本扩展。1.1.4 是审计修复：Echo persist 竞态（旧出口不得覆盖新出口）、Invalid Date 按目标时区本地午夜恢复、HTMLGeolocationElement invalid `error` 不再递归、EST/PST 等显式时区缩写保持绝对时间。不改 UI 风格、不加功能。
 
 ## 仓库结构
 
@@ -88,7 +88,7 @@ node --test tests/*.test.js
 
 不要写成 `node --test extension/tests/*.test.js`——这个仓库根目录没有 `extension/` 这一层。
 
-当前 **145** 项测试。高风险行为（Date / HTMLGeolocation / 权限撤销）会用 Node `vm` **真正执行** `content/injected.js`，而不是只测 helper。
+当前 **160** 项测试。高风险行为（Date / HTMLGeolocation / 权限撤销）会用 Node `vm` **真正执行** `content/injected.js`，而不是只测 helper。
 
 CI：每次 push / pull request 跑同一套测试。
 

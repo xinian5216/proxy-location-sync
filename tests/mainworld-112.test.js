@@ -99,6 +99,9 @@ function loadInjected({ bootstrap, permission = "granted" } = {}) {
       return this._native;
     }
     get error() {
+      if (this.isValid === false) {
+        return this._nativeError || { code: 2, message: "native invalid" };
+      }
       return null;
     }
   }
@@ -485,20 +488,46 @@ describe("[runtime injected] Date getYear / setYear / Invalid setFullYear / non-
     assert.equal(d2.getTime(), Date.UTC(2026, 0, 15, 3, 0, 0));
   });
 
-  test("[runtime injected] Invalid Date.setFullYear recovers using Tokyo local of +0", () => {
+  test("[runtime injected] Invalid Date.setFullYear recovers as Tokyo local midnight", () => {
     const { sandbox } = loadInjected();
     applyReady(sandbox, TOKYO);
     const d = new sandbox.Date(Number.NaN);
     const ret = d.setFullYear(2026);
     assert.equal(Number.isNaN(ret), false);
     assert.equal(d.getFullYear(), 2026);
-    assert.equal(d.getTime(), Date.UTC(2026, 0, 1, 0, 0, 0));
-    assert.equal(d.getHours(), 9);
+    assert.equal(d.getHours(), 0);
     assert.equal(d.getMonth(), 0);
     assert.equal(d.getDate(), 1);
+    assert.equal(d.getTime(), Date.UTC(2025, 11, 31, 15, 0, 0, 0));
+    assert.equal(d.getTime(), 1767193200000);
   });
 
-  test("[runtime injected] Invalid Date.setMonth/setHours stay Invalid; setYear recovers", () => {
+  test("[runtime injected] Invalid Date.setFullYear recovers as Los Angeles local midnight", () => {
+    const { sandbox } = loadInjected();
+    applyReady(sandbox, LA);
+    const d = new sandbox.Date(Number.NaN);
+    const ret = d.setFullYear(2026);
+    assert.equal(Number.isNaN(ret), false);
+    assert.equal(d.getFullYear(), 2026);
+    assert.equal(d.getHours(), 0);
+    assert.equal(d.getDate(), 1);
+    assert.equal(d.getTime(), Date.UTC(2026, 0, 1, 8, 0, 0, 0));
+    assert.equal(d.getTime(), 1767254400000);
+  });
+
+  test("[runtime injected] Invalid Date.setFullYear(2026, 5, 2) is June 2 00:00 fake TZ", () => {
+    const { sandbox } = loadInjected();
+    applyReady(sandbox, TOKYO);
+    const d = new sandbox.Date(Number.NaN);
+    d.setFullYear(2026, 5, 2);
+    assert.equal(d.getFullYear(), 2026);
+    assert.equal(d.getMonth(), 5);
+    assert.equal(d.getDate(), 2);
+    assert.equal(d.getHours(), 0);
+    assert.equal(d.getTime(), Date.UTC(2026, 5, 1, 15, 0, 0, 0));
+  });
+
+  test("[runtime injected] Invalid Date.setMonth/setHours stay Invalid; setYear recovers midnight", () => {
     const { sandbox } = loadInjected();
     applyReady(sandbox, TOKYO);
     const a = new sandbox.Date(Number.NaN);
@@ -510,7 +539,9 @@ describe("[runtime injected] Date getYear / setYear / Invalid setFullYear / non-
     const d = new sandbox.Date(Number.NaN);
     d.setYear(26);
     assert.equal(d.getFullYear(), 1926);
-    assert.equal(d.getHours(), 9);
+    assert.equal(d.getHours(), 0);
+    assert.equal(d.getDate(), 1);
+    assert.equal(d.getTime(), Date.UTC(1925, 11, 31, 15, 0, 0, 0));
   });
 
   test("[runtime injected] non-ISO Date.parse and new Date use fake timezone", () => {
@@ -533,6 +564,19 @@ describe("[runtime injected] Date getYear / setYear / Invalid setFullYear / non-
     const gmt = sandbox.Date.parse("January 1, 2026 00:00:00 GMT");
     assert.equal(gmt, Date.UTC(2026, 0, 1, 0, 0, 0));
     assert.notEqual(sandbox.Date.parse("2026-01-01T00:00:00Z"), Date.UTC(2025, 11, 31, 15, 0, 0));
+  });
+
+  test("[runtime injected] EST/EDT/PST/PDT stay native-absolute under fake Tokyo", () => {
+    const { sandbox } = loadInjected();
+    applyReady(sandbox, TOKYO);
+    assert.equal(sandbox.Date.parse("Jan 1 2026 00:00 EST"), Date.parse("Jan 1 2026 00:00 EST"));
+    assert.equal(sandbox.Date.parse("Jan 1 2026 00:00 EST"), Date.UTC(2026, 0, 1, 5, 0, 0, 0));
+    assert.equal(sandbox.Date.parse("Jan 1 2026 00:00 EDT"), Date.parse("Jan 1 2026 00:00 EDT"));
+    assert.equal(sandbox.Date.parse("Jan 1 2026 00:00 PST"), Date.parse("Jan 1 2026 00:00 PST"));
+    assert.equal(sandbox.Date.parse("Jan 1 2026 00:00 PDT"), Date.parse("Jan 1 2026 00:00 PDT"));
+    assert.equal(sandbox.Date.parse("Jan 1 2026 00:00 EST"), 1767243600000);
+    assert.notEqual(sandbox.Date.parse("Jan 1 2026 00:00 EST"), Date.UTC(2025, 11, 31, 20, 0, 0, 0));
+    assert.equal(new sandbox.Date("Jan 1 2026 00:00 PST").getTime(), Date.parse("Jan 1 2026 00:00 PST"));
   });
 });
 
@@ -570,6 +614,43 @@ describe("[runtime injected] HTMLGeolocationElement permission + watch events", 
     const el = sandbox.document.createElement("geolocation");
     el.isValid = false;
     assert.equal(el.position, null);
+  });
+
+  test("[runtime injected] invalid HTMLGeolocationElement.error does not recurse", () => {
+    const { sandbox } = loadInjected();
+    applyReady(sandbox, TOKYO);
+    const el = sandbox.document.createElement("geolocation");
+    el.isValid = false;
+    el._nativeError = { code: 99, message: "native-invalid" };
+    assert.equal(el.position, null);
+    let last;
+    for (let i = 0; i < 100; i += 1) {
+      last = el.error;
+    }
+    assert.equal(last.code, 99);
+    assert.equal(last.message, "native-invalid");
+  });
+
+  test("[runtime injected] denied + isValid → error.code PERMISSION_DENIED", () => {
+    const { sandbox } = loadInjected({ permission: "denied" });
+    applyReady(sandbox, TOKYO);
+    const el = sandbox.document.createElement("geolocation");
+    el.permissionStatus = "denied";
+    el.isValid = true;
+    assert.equal(el.position, null);
+    assert.equal(el.error.code, 1);
+    assert.equal(el.error.code, sandbox.GeolocationPositionError.PERMISSION_DENIED);
+  });
+
+  test("[runtime injected] granted + geo error + isValid → POSITION_UNAVAILABLE", () => {
+    const { sandbox } = loadInjected({ permission: "granted" });
+    applyReady(sandbox, { ...TOKYO, geoStatus: "error" });
+    const el = sandbox.document.createElement("geolocation");
+    el.permissionStatus = "granted";
+    el.isValid = true;
+    assert.equal(el.position, null);
+    assert.equal(el.error.code, 2);
+    assert.equal(el.error.code, sandbox.GeolocationPositionError.POSITION_UNAVAILABLE);
   });
 
   test("[runtime injected] watch=false does not keep pushing location on A→B", async () => {

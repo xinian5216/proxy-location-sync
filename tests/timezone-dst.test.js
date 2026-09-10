@@ -6,10 +6,12 @@ import {
   formatDateToString,
   getOffsetMinutes,
   getTzParts,
+  hasExplicitTimeZone,
   isInvalidDate,
   isValidTimeZone,
   parseDateString,
   wallTimeToUtcMs,
+  yearFromSetYear,
 } from "../lib/timezone.js";
 
 function wall(tz, y, m, d, h = 0, min = 0, s = 0, ms = 0) {
@@ -194,15 +196,72 @@ describe("IANA timezone validation + Date setters", () => {
     assert.equal(isInvalidDate(d4), true);
   });
 
-  test("Invalid Date.setFullYear recovers using virtual timezone of +0", () => {
+  test("Invalid Date.setFullYear recovers as Tokyo local midnight, not epoch+0 wall", () => {
     const tz = "Asia/Tokyo";
     const d = new Date(Number.NaN);
     const ret = applySetFullYear(tz, d, 2026);
     assert.equal(Number.isNaN(ret), false);
     assert.equal(isInvalidDate(d), false);
-    assert.equal(d.getTime(), Date.UTC(2026, 0, 1, 0, 0, 0));
+    assert.equal(d.getTime(), Date.UTC(2025, 11, 31, 15, 0, 0, 0));
+    assert.equal(d.getTime(), 1767193200000);
     const p = parts(tz, d.getTime());
     assert.equal(p.year, 2026);
-    assert.equal(p.hour, 9);
+    assert.equal(p.month, 1);
+    assert.equal(p.day, 1);
+    assert.equal(p.hour, 0);
+  });
+
+  test("Invalid Date.setFullYear recovers as Los Angeles local midnight", () => {
+    const tz = "America/Los_Angeles";
+    const d = new Date(Number.NaN);
+    const ret = applySetFullYear(tz, d, 2026);
+    assert.equal(ret, Date.UTC(2026, 0, 1, 8, 0, 0, 0));
+    assert.equal(d.getTime(), 1767254400000);
+    const p = parts(tz, d.getTime());
+    assert.equal(p.year, 2026);
+    assert.equal(p.day, 1);
+    assert.equal(p.hour, 0);
+  });
+
+  test("Invalid Date.setFullYear(2026, 5, 2) is June 2 00:00 virtual TZ", () => {
+    const tz = "Asia/Tokyo";
+    const d = new Date(Number.NaN);
+    applySetFullYear(tz, d, 2026, 5, 2);
+    const p = parts(tz, d.getTime());
+    assert.equal(p.year, 2026);
+    assert.equal(p.month, 6);
+    assert.equal(p.day, 2);
+    assert.equal(p.hour, 0);
+    assert.equal(d.getTime(), Date.UTC(2026, 5, 1, 15, 0, 0, 0));
+  });
+
+  test("Invalid Date.setYear 26 recovers as 1926-01-01 local midnight", () => {
+    const tz = "Asia/Tokyo";
+    const d = new Date(Number.NaN);
+    applySetFullYear(tz, d, yearFromSetYear(26));
+    const p = parts(tz, d.getTime());
+    assert.equal(p.year, 1926);
+    assert.equal(p.month, 1);
+    assert.equal(p.day, 1);
+    assert.equal(p.hour, 0);
+    assert.equal(d.getTime(), Date.UTC(1925, 11, 31, 15, 0, 0, 0));
+  });
+
+  test("legacy US TZ abbreviations stay native-absolute, not fake-local", () => {
+    const tz = "Asia/Tokyo";
+    assert.equal(hasExplicitTimeZone("Jan 1 2026 00:00 EST"), true);
+    assert.equal(hasExplicitTimeZone("Jan 1 2026 00:00 PDT"), true);
+    assert.equal(hasExplicitTimeZone("Jan 1 2026 00:00:00"), false);
+    for (const abbr of ["EST", "EDT", "CST", "CDT", "MST", "MDT", "PST", "PDT"]) {
+      const s = `Jan 1 2026 00:00 ${abbr}`;
+      assert.equal(parseDateString(tz, s), Date.parse(s), s);
+    }
+    assert.equal(parseDateString(tz, "Jan 1 2026 00:00 EST"), Date.UTC(2026, 0, 1, 5, 0, 0, 0));
+    assert.equal(parseDateString(tz, "Jan 1 2026 00:00 EDT"), Date.UTC(2026, 0, 1, 4, 0, 0, 0));
+    assert.equal(parseDateString(tz, "Jan 1 2026 00:00 PST"), Date.UTC(2026, 0, 1, 8, 0, 0, 0));
+    assert.equal(parseDateString(tz, "Jan 1 2026 00:00 PDT"), Date.UTC(2026, 0, 1, 7, 0, 0, 0));
+    assert.notEqual(parseDateString(tz, "Jan 1 2026 00:00 EST"), Date.UTC(2025, 11, 31, 20, 0, 0, 0));
+    const naive = parseDateString(tz, "Jan 1 2026 00:00:00");
+    assert.equal(naive, Date.UTC(2025, 11, 31, 15, 0, 0, 0));
   });
 });

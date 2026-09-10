@@ -16,8 +16,11 @@ describe("source guards (no leak / no fake / no extra perms)", () => {
   const manifest = JSON.parse(read("manifest.json"));
   const constants = read("lib/constants.js");
 
-  test("manifest 1.1.3, no tabs permission, min Chrome 116", () => {
-    assert.equal(manifest.version, "1.1.3");
+  const pipeline = read("lib/exit-pipeline.js");
+  const timezone = read("lib/timezone.js");
+
+  test("manifest 1.1.4, no tabs permission, min Chrome 116", () => {
+    assert.equal(manifest.version, "1.1.4");
     assert.equal(manifest.minimum_chrome_version, "116");
     assert.deepEqual(manifest.permissions.sort(), [
       "alarms",
@@ -105,5 +108,16 @@ describe("source guards (no leak / no fake / no extra perms)", () => {
     assert.match(ip, /api64\.ipify\.org/);
     assert.match(geo, /isValidTimeZone/);
     assert.doesNotMatch(geo, /timezone\.includes\("\/"\)/);
+  });
+
+  test("1.1.4 generation / native error helper / EST abbreviations present", () => {
+    assert.match(pipeline, /exitGeneration/);
+    assert.match(pipeline, /myGeneration/);
+    assert.match(injected, /nativeHtmlGeoErrorDescriptor/);
+    assert.match(injected, /htmlGeoErrorValue/);
+    assert.match(injected, /readNativeHtmlGeoError/);
+    assert.doesNotMatch(injected, /isValid === false\) return el\.error/);
+    assert.match(injected, /EST\|EDT\|CST\|CDT\|MST\|MDT\|PST\|PDT/);
+    assert.match(timezone, /EST\|EDT\|CST\|CDT\|MST\|MDT\|PST\|PDT/);
   });
 });
