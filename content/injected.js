@@ -9,6 +9,7 @@
  * 用户暂停自动同步：停止检测；已打开页面保持 fail-closed 虚拟状态。
  * 要恢复系统定位，需在 chrome://extensions 关闭本扩展（或刷新且内容脚本不再注入）。
  * 不伪装 Function#toString。不修改 navigator.language。
+ * PAGE_ENV 只读 Window 环境。不在 MAIN 创建 Blob / Worker（目标站 CSP worker-src 会阻断）。
  */
 (function proxyLocationSyncMainWorld() {
   "use strict";
@@ -168,42 +169,6 @@
     return false;
   }
 
-  function probeWorker() {
-    return new Promise((resolve) => {
-      try {
-        if (typeof Worker !== "function" || typeof Blob !== "function" || typeof URL === "undefined") {
-          resolve({ ok: false, reason: "Worker unavailable" });
-          return;
-        }
-        const src =
-          "self.onmessage=function(){try{self.postMessage({ok:true,timezone:Intl.DateTimeFormat().resolvedOptions().timeZone,offsetMin:new Date().getTimezoneOffset(),language:navigator.language||\"\"});}catch(e){self.postMessage({ok:false,reason:String(e)});}};";
-        const blob = new Blob([src], { type: "text/javascript" });
-        const url = URL.createObjectURL(blob);
-        const w = new Worker(url);
-        const timer = setTimeout(() => {
-          try { w.terminate(); } catch { /* ignore */ }
-          try { URL.revokeObjectURL(url); } catch { /* ignore */ }
-          resolve({ ok: false, reason: "worker timeout" });
-        }, 1500);
-        w.onmessage = function (ev) {
-          clearTimeout(timer);
-          try { w.terminate(); } catch { /* ignore */ }
-          try { URL.revokeObjectURL(url); } catch { /* ignore */ }
-          resolve(ev && ev.data ? ev.data : { ok: false });
-        };
-        w.onerror = function () {
-          clearTimeout(timer);
-          try { w.terminate(); } catch { /* ignore */ }
-          try { URL.revokeObjectURL(url); } catch { /* ignore */ }
-          resolve({ ok: false, reason: "worker error" });
-        };
-        w.postMessage("probe");
-      } catch (err) {
-        resolve({ ok: false, reason: String(err && err.message ? err.message : err) });
-      }
-    });
-  }
-
   function replyPageEnv() {
     const payload = {
       type: "PAGE_ENV",
@@ -226,12 +191,9 @@
     try {
       payload.offsetMin = new Date().getTimezoneOffset();
     } catch { /* ignore */ }
-    probeWorker().then(function (worker) {
-      payload.worker = worker;
-      try {
-        window.dispatchEvent(new CustomEvent(EVENT, { detail: payload }));
-      } catch { /* ignore */ }
-    });
+    try {
+      window.dispatchEvent(new CustomEvent(EVENT, { detail: payload }));
+    } catch { /* ignore */ }
   }
 
   function hookPermissionStatus(st) {

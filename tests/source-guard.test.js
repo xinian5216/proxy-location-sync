@@ -19,8 +19,8 @@ describe("source guards (no leak / no fake / no extra perms)", () => {
   const pipeline = read("lib/exit-pipeline.js");
   const timezone = read("lib/timezone.js");
 
-  test("manifest 1.2.2, no tabs permission, min Chrome 116", () => {
-    assert.equal(manifest.version, "1.2.2");
+  test("manifest 1.2.4, no tabs permission, min Chrome 116", () => {
+    assert.equal(manifest.version, "1.2.4");
     assert.equal(manifest.minimum_chrome_version, "116");
     assert.deepEqual(manifest.permissions.sort(), [
       "alarms",
@@ -176,5 +176,51 @@ describe("source guards (no leak / no fake / no extra perms)", () => {
     assert.doesNotMatch(injected, /measureText/);
     assert.doesNotMatch(injected, /CanvasRenderingContext2D/);
     assert.doesNotMatch(sw, /navigator\.language\s*=/);
+  });
+
+  test("1.2.3 MAIN PAGE_ENV has no Worker/Blob; packaged extension Worker probe", () => {
+    const workerProbe = read("diagnostics/worker-probe.js");
+    const runner = read("lib/diagnostics-runner.js");
+    const workerLib = read("lib/worker-probe.js");
+    const diagEval = read("lib/diagnostics.js");
+    assert.doesNotMatch(injected, /new Worker\s*\(/);
+    assert.doesNotMatch(injected, /createObjectURL/);
+    assert.doesNotMatch(injected, /new Blob\s*\(/);
+    assert.doesNotMatch(injected, /payload\.worker/);
+    assert.match(injected, /function replyPageEnv/);
+    const replyIdx = injected.indexOf("function replyPageEnv");
+    const endIdx = injected.indexOf("function hookPermissionStatus");
+    assert.ok(replyIdx > 0 && endIdx > replyIdx);
+    const slice = injected.slice(replyIdx, endIdx);
+    assert.doesNotMatch(slice, /Worker/);
+    assert.doesNotMatch(slice, /Blob/);
+    assert.match(workerProbe, /Intl\.DateTimeFormat/);
+    assert.doesNotMatch(workerProbe, /createObjectURL/);
+    assert.doesNotMatch(workerProbe, /new Blob/);
+    assert.match(workerLib, /probeExtensionWorker/);
+    assert.match(workerLib, /diagnostics\/worker-probe\.js/);
+    assert.doesNotMatch(workerLib, /createObjectURL/);
+    assert.match(offscreen, /OFFSCREEN_WORKER_PROBE/);
+    assert.match(offscreen, /probeExtensionWorker/);
+    assert.match(sw, /probeExtensionWorkerOffscreen/);
+    assert.match(sw, /OFFSCREEN_WORKER_PROBE/);
+    assert.match(runner, /probeWorker/);
+    assert.match(diagEval, /worker: input\.worker/);
+    assert.doesNotMatch(diagEval, /worker: page && page\.worker/);
+    assert.equal(manifest.web_accessible_resources, undefined);
+    assert.doesNotMatch(JSON.stringify(manifest), /web_accessible_resources/);
+  });
+
+  test("1.2.4 boot restores badge from hydrated state; two-letter countryCode", () => {
+    const badge = read("lib/badge.js");
+    assert.match(badge, /toUpperCase\(\)/);
+    assert.match(badge, /slice\(0,\s*2\)/);
+    assert.match(sw, /from "\.\.\/lib\/badge\.js"/);
+    const boot = sw.match(/async function boot\(reason\) \{[\s\S]*?\n\}/);
+    assert.ok(boot);
+    const hyd = boot[0].indexOf("hydrateFromStorage");
+    const ref = boot[0].indexOf("refreshAction(snap.state, snap.settings)");
+    assert.ok(hyd >= 0 && ref > hyd);
+    assert.doesNotMatch(boot[0], /lookupGeo/);
   });
 });

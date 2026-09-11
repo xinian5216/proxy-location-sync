@@ -1,5 +1,9 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { describe, test } from "node:test";
+import { fileURLToPath } from "node:url";
+import vm from "node:vm";
 import { DNS_CACHE_MS, DNS_FAIL_CACHE_MS } from "../lib/constants.js";
 import {
   buildDiagnostics,
@@ -24,6 +28,7 @@ import { createExitPipeline } from "../lib/exit-pipeline.js";
 import { haversineKm } from "../lib/geo.js";
 import { isValidIpLiteral } from "../lib/ip-compare.js";
 import { getOffsetMinutes } from "../lib/timezone.js";
+import { probeExtensionWorker } from "../lib/worker-probe.js";
 
 const JP = {
   ip: "203.0.113.10",
@@ -245,12 +250,14 @@ describe("environment consistency evaluators", () => {
     const d = buildDiagnostics({
       exit: JP,
       virtual: JP,
-      page: japanPage({
-        worker: { ok: true, timezone: "Asia/Shanghai" },
-      }),
+      page: japanPage(),
+      worker: { ok: true, timezone: "Asia/Shanghai" },
     });
     assert.equal(d.worker.status, "warning");
+    assert.notEqual(d.worker.status, "error");
     assert.equal(d.overall.label, "Needs attention");
+    assert.ok(!d.overall.issues.some((x) => /Worker/i.test(x)));
+    assert.ok(d.overall.warnings.some((x) => /已知限制/.test(x)));
   });
 });
 
@@ -395,6 +402,9 @@ describe("diagnostics controller cache + isolation", () => {
       probePage: async () => {
         throw new Error("probe boom");
       },
+      probeWorker: async () => {
+        throw new Error("worker boom");
+      },
     });
     const echo = await pipeline.onEcho({ ip: JP.ip, provider: "t", reason: "boot" });
     if (echo && echo.geoPromise) await echo.geoPromise;
@@ -420,6 +430,9 @@ describe("diagnostics controller cache + isolation", () => {
       },
       probePage: async () => {
         throw new Error("z");
+      },
+      probeWorker: async () => {
+        throw new Error("w");
       },
     });
     const r = await ctrl.run({ state: JP });
@@ -1096,3 +1109,236 @@ describe("1.2.2 diagnostics priority + DNS IP validation", () => {
     assert.equal(ctrl.dnsNeedsRefresh(JP.ip), true);
   });
 });
+
+describe("1.2.3 packaged Worker probe (not MAIN blob)", () => {
+  test("1. PAGE_ENV worker field is ignored so a page cannot forge Worker", () => {
+    const d = buildDiagnostics({
+      exit: JP,
+      virtual: JP,
+      page: japanPage({
+        worker: { ok: true, timezone: "Asia/Shanghai" },
+      }),
+    });
+    assert.equal(d.worker.status, "unknown");
+    assert.notEqual(d.worker.status, "warning");
+    assert.notEqual(d.worker.status, "error");
+  });
+
+  test("2. Window vs Extension Worker mismatch is warning, never error", () => {
+    const d = buildDiagnostics({
+      exit: JP,
+      virtual: JP,
+      page: japanPage(),
+      worker: { ok: true, timezone: "America/Los_Angeles" },
+    });
+    assert.equal(d.worker.status, "warning");
+    assert.notEqual(d.worker.status, "error");
+    assert.equal(d.worker.mainTimezone, "Asia/Tokyo");
+    assert.equal(d.worker.workerTimezone, "America/Los_Angeles");
+    assert.equal(d.overall.label, "Needs attention");
+    assert.equal(d.overall.issues.length, 0);
+  });
+
+  test("3. packaged worker-probe.js reports timezone [runtime worker-probe]", () => {
+    const root = join(dirname(fileURLToPath(import.meta.url)), "..");
+    const src = readFileSync(join(root, "diagnostics/worker-probe.js"), "utf8");
+    assert.match(src, /Intl\.DateTimeFormat/);
+    assert.match(src, /getTimezoneOffset/);
+    assert.match(src, /navigator\.language/);
+    assert.doesNotMatch(src, /createObjectURL/);
+    assert.doesNotMatch(src, /new Blob/);
+    const messages = [];
+    const self = {
+      onmessage: null,
+      postMessage(data) {
+        messages.push(data);
+      },
+      navigator: { language: "en-US" },
+    };
+    vm.runInNewContext(src, { self, Intl, Date, Number, navigator: self.navigator });
+    assert.equal(typeof self.onmessage, "function");
+    self.onmessage({ data: "probe" });
+    assert.equal(messages.length, 1);
+    assert.equal(messages[0].ok, true);
+    assert.ok(messages[0].timezone);
+    assert.equal(typeof messages[0].offsetMin, "number");
+    assert.equal(messages[0].language, "en-US");
+  });
+
+  test("4. probeExtensionWorker uses packaged URL, never Blob", async () => {
+    const urls = [];
+    class PackagedWorker {
+      constructor(url) {
+        urls.push(url);
+        this.onmessage = null;
+        this.onerror = null;
+      }
+      postMessage() {
+        queueMicrotask(() => {
+          if (this.onmessage) {
+            this.onmessage({
+              data: {
+                ok: true,
+                timezone: "America/Los_Angeles",
+                offsetMin: 480,
+                language: "en-US",
+              },
+            });
+          }
+        });
+      }
+      terminate() {}
+    }
+    const r = await probeExtensionWorker({
+      Worker: PackagedWorker,
+      workerUrl: "chrome-extension://id/diagnostics/worker-probe.js",
+    });
+    assert.equal(r.ok, true);
+    assert.equal(r.timezone, "America/Los_Angeles");
+    assert.deepEqual(urls, ["chrome-extension://id/diagnostics/worker-probe.js"]);
+    assert.doesNotMatch(urls[0], /^blob:/);
+  });
+
+  test("5. Worker probe timeout / constructor error / onerror → unknown, no throw", async () => {
+    class SilentWorker {
+      constructor() {
+        this.onmessage = null;
+        this.onerror = null;
+      }
+      postMessage() {}
+      terminate() {}
+    }
+    const timed = await probeExtensionWorker({
+      Worker: SilentWorker,
+      workerUrl: "chrome-extension://id/diagnostics/worker-probe.js",
+      timeout: 40,
+    });
+    assert.equal(timed.ok, false);
+    assert.match(timed.reason, /timeout/i);
+
+    const boom = await probeExtensionWorker({
+      Worker: function Worker() {
+        throw new Error("Failed to construct 'Worker': violates Content Security Policy");
+      },
+      workerUrl: "chrome-extension://id/diagnostics/worker-probe.js",
+    });
+    assert.equal(boom.ok, false);
+    assert.match(boom.reason, /Content Security Policy|Worker unavailable/i);
+
+    class ErroringWorker {
+      constructor() {
+        this.onmessage = null;
+        this.onerror = null;
+        queueMicrotask(() => {
+          if (this.onerror) this.onerror(new Error("worker-src"));
+        });
+      }
+      postMessage() {}
+      terminate() {}
+    }
+    const erred = await probeExtensionWorker({
+      Worker: ErroringWorker,
+      workerUrl: "chrome-extension://id/diagnostics/worker-probe.js",
+    });
+    assert.equal(erred.ok, false);
+    assert.match(erred.reason, /worker error/);
+
+    const missing = await probeExtensionWorker({});
+    assert.equal(missing.ok, false);
+  });
+
+  test("6. runner: probeWorker throw → unknown, PAGE_ENV / DNS / pipeline still complete", async () => {
+    const pipeWrites = [];
+    const pipeline = createExitPipeline({
+      lookupGeo: async () => ({ ...JP, provider: "ipapi", region: "Tokyo" }),
+      persist: async () => {
+        pipeWrites.push("pipe");
+      },
+      probeWebrtc: async () => {},
+    });
+    const ctrl = createDiagnosticsController({
+      lookupDns: async () => ({
+        resolvers: [{ ip: "1.1.1.1", org: "Cloudflare" }],
+        provider: "bash.ws",
+      }),
+      persist: async () => {},
+      probePage: async () => japanPage(),
+      probeWorker: async () => {
+        throw new Error("offscreen Worker failed");
+      },
+    });
+    const echo = await pipeline.onEcho({ ip: JP.ip, provider: "t", reason: "boot" });
+    if (echo && echo.geoPromise) await echo.geoPromise;
+    const diag = await ctrl.run({ state: pipeline.snapshot().state || JP });
+    assert.ok(pipeWrites.length >= 1);
+    assert.equal(pipeline.snapshot().state.ip, JP.ip);
+    assert.equal(pipeline.snapshot().state.timezone, "Asia/Tokyo");
+    assert.equal(diag.ok, true);
+    assert.equal(diag.diagnostics.worker.status, "unknown");
+    assert.notEqual(diag.diagnostics.worker.status, "error");
+    assert.equal(diag.diagnostics.timezone.status, "ok");
+    assert.equal(diag.diagnostics.patch.status, "ok");
+  });
+
+  test("7. runner compares Window probe vs Extension Worker probe", async () => {
+    const ctrl = createDiagnosticsController({
+      now: () => 70_000_000,
+      lookupDns: async () => ({
+        resolvers: [{ ip: "1.1.1.1", org: "Cloudflare" }],
+        provider: "bash.ws",
+      }),
+      persist: async () => {},
+      probePage: async () => japanPage(),
+      probeWorker: async () => ({ ok: true, timezone: "Asia/Shanghai", offsetMin: SHANGHAI_OFFSET }),
+    });
+    const r = await ctrl.run({ state: JP });
+    assert.equal(r.ok, true);
+    assert.equal(r.diagnostics.worker.status, "warning");
+    assert.equal(r.diagnostics.worker.mainTimezone, "Asia/Tokyo");
+    assert.equal(r.diagnostics.worker.workerTimezone, "Asia/Shanghai");
+    assert.equal(r.diagnostics.overall.label, "Needs attention");
+  });
+
+  test("8. abort during Worker probe discards and does not persist unknown for aborted IP", async () => {
+    const persisted = [];
+    let release;
+    const gate = new Promise((resolve) => {
+      release = resolve;
+    });
+    const ctrl = createDiagnosticsController({
+      now: () => 71_000_000,
+      lookupDns: async () => ({
+        resolvers: [{ ip: "203.0.113.8", countryCode: "JP", org: "NTT" }],
+        provider: "bash.ws",
+      }),
+      persist: async (d) => {
+        persisted.push(d);
+      },
+      probePage: async () => japanPage(),
+      probeWorker: async (signal) => {
+        await gate;
+        if (signal && signal.aborted) {
+          const err = new Error("aborted");
+          err.name = "AbortError";
+          throw err;
+        }
+        return { ok: true, timezone: "Asia/Shanghai" };
+      },
+    });
+    const first = ctrl.run({ state: JP, reason: "manual" });
+    await wait(20);
+    const second = ctrl.run({
+      state: { ...JP, ip: US.ip, pendingIp: US.ip, countryCode: "US", timezone: "America/New_York" },
+      reason: "auto",
+    });
+    release();
+    const a = await first;
+    const b = await second;
+    assert.equal(a.discarded, true);
+    assert.equal(b.ok, true);
+    assert.ok(persisted.length >= 1);
+    const last = persisted[persisted.length - 1];
+    assert.ok(last.network.ip === US.ip || last.network.detectedIp === US.ip);
+  });
+});
+

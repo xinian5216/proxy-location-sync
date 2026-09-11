@@ -25,6 +25,7 @@ import { detectPublicIp, ipHealth } from "../lib/ip-providers.js";
 import { nextPollDelayMs } from "../lib/poll-sleep.js";
 import { createPollerSupervisor } from "../lib/poller-mode.js";
 import { collectTabIds } from "../lib/tab-targets.js";
+import { updateBadge } from "../lib/badge.js";
 
 const OFFSCREEN_URL = "offscreen/offscreen.html";
 const DIAGNOSTICS_URL = "diagnostics/diagnostics.html";
@@ -46,6 +47,7 @@ const diagnosticsCtrl = createDiagnosticsController({
   lookupDns: (opts) => dnsProbe.lookup(opts),
   persist: persistDiagnostics,
   probePage: probeHttpPageEnv,
+  probeWorker: probeExtensionWorkerOffscreen,
 });
 
 chrome.runtime.onInstalled.addListener(() => {
@@ -109,7 +111,7 @@ async function persistDiagnostics(diag) {
   await chrome.storage.local.set({ [STORAGE_KEYS.diagnostics]: diag });
 }
 
-async function runDiagnosticsSafe({ force = false, reason, locale, environment } = {}) {
+async function runDiagnosticsSafe({ force = false, reason, locale, environment, worker } = {}) {
   try {
     const snap = pipeline.snapshot();
     const local = collectBrowserEnvironment();
@@ -118,6 +120,7 @@ async function runDiagnosticsSafe({ force = false, reason, locale, environment }
       settings: snap.settings,
       locale: locale || local.locale,
       environment: environment || local.environment,
+      worker,
       force,
       reason: reason || (force ? "manual" : "auto"),
     });
@@ -146,14 +149,31 @@ async function probeHttpPageEnv() {
   return null;
 }
 
+async function probeExtensionWorkerOffscreen() {
+  try {
+    if (!(await hasOffscreenDocument())) {
+      return { ok: false, reason: "Worker unavailable" };
+    }
+    const result = await chrome.runtime.sendMessage({ type: MSG.OFFSCREEN_WORKER_PROBE });
+    if (!result || typeof result !== "object") {
+      return { ok: false, reason: "Worker unavailable" };
+    }
+    if (result.ok === true || result.ok === false) return result;
+    return { ok: false, reason: "Worker unavailable" };
+  } catch (err) {
+    return { ok: false, reason: String(err && err.message ? err.message : err) };
+  }
+}
+
 async function boot(reason) {
   await ensureDefaults();
   await hydrateFromStorage();
+  const snap = pipeline.snapshot();
+  await refreshAction(snap.state, snap.settings);
   await chrome.alarms.create(ALARM_KEEPALIVE, { periodInMinutes: 1 });
   await chrome.alarms.create(ALARM_DNS, { periodInMinutes: DNS_ALARM_MINUTES });
-  const { settings } = pipeline.snapshot();
-  if (settings.enabled) {
-    await startPolling(settings);
+  if (snap.settings.enabled) {
+    await startPolling(snap.settings);
     await kickEcho(reason);
   } else {
     await stopBackgroundWork();
@@ -195,7 +215,7 @@ async function onSettingsChanged(next) {
     await kickEcho("settings");
   } else {
     await stopBackgroundWork();
-    await updateBadge(null, false);
+    await refreshAction(null, settings);
   }
 }
 
@@ -258,6 +278,7 @@ async function handleMessage(message) {
       reason: "manual",
       locale: message.locale,
       environment: message.environment,
+      worker: message.worker,
     });
     return getSnapshot();
   }
@@ -464,30 +485,7 @@ function stopSwFallback() {
 }
 
 async function refreshAction(state, settings) {
-  await updateBadge(state, settings && settings.enabled);
-}
-
-async function updateBadge(state, enabled) {
-  try {
-    if (!enabled || !state || !state.countryCode) {
-      await chrome.action.setBadgeText({ text: "" });
-      await chrome.action.setTitle({ title: "Proxy Location Sync" });
-      return;
-    }
-    await chrome.action.setBadgeBackgroundColor({ color: "#0f766e" });
-    try {
-      await chrome.action.setBadgeTextColor({ color: "#ecfdf5" });
-    } catch {
-      /* Edge */
-    }
-    await chrome.action.setBadgeText({ text: String(state.countryCode).slice(0, 3) });
-    const title = ["Proxy Location Sync", state.ip, [state.city, state.country].filter(Boolean).join(", "), state.timezone]
-      .filter(Boolean)
-      .join(" · ");
-    await chrome.action.setTitle({ title });
-  } catch {
-    /* ignore */
-  }
+  await updateBadge(chrome.action, state, settings && settings.enabled);
 }
 
 async function injectBootstrap(details) {

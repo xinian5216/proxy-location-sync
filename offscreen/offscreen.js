@@ -8,6 +8,7 @@ import { createAbortSlot, runExclusive } from "../lib/abort-slot.js";
 import { detectPublicIp, ipHealth } from "../lib/ip-providers.js";
 import { nextPollDelayMs, runResilientLoop, sendAck } from "../lib/poll-sleep.js";
 import { probeWebRtc } from "../lib/webrtc.js";
+import { probeExtensionWorker, WORKER_PROBE_SCRIPT } from "../lib/worker-probe.js";
 
 let intervalSec = 3;
 let stopped = true;
@@ -37,6 +38,14 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   }
   if (type === MSG.OFFSCREEN_WEBRTC) {
     void runWebRtc(message.ip).then((result) => sendResponse(result));
+    return true;
+  }
+  if (type === MSG.OFFSCREEN_WORKER_PROBE) {
+    void runWorkerProbe()
+      .then((result) => sendResponse(result))
+      .catch((err) =>
+        sendResponse({ ok: false, reason: String(err && err.message ? err.message : err) }),
+      );
     return true;
   }
   return false;
@@ -105,6 +114,17 @@ async function runWebRtc(ip) {
     });
     return result;
   });
+}
+
+async function runWorkerProbe() {
+  try {
+    return await probeExtensionWorker({
+      Worker: globalThis.Worker,
+      workerUrl: chrome.runtime.getURL(WORKER_PROBE_SCRIPT),
+    });
+  } catch (err) {
+    return { ok: false, reason: String(err && err.message ? err.message : err) };
+  }
 }
 
 function sleep(ms) {

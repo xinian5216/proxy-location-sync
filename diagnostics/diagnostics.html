@@ -60,7 +60,7 @@
         <h2>Advanced</h2>
         <dl class="facts" id="adv-facts"></dl>
         <p class="note">
-          Canvas / WebGL 只读展示可用性，不注入噪声或伪装 vendor。Worker 不一致是扩展方案的已知限制，不是产品缺陷。
+          Canvas / WebGL 只读展示可用性，不注入噪声或伪装 vendor。Worker 时区由扩展 packaged Worker 探测，不在目标网页创建 Blob Worker。与 Window 不一致是扩展方案的已知限制，不是产品缺陷。
           Patch 自检是 best-effort：普通脚本覆盖 / 注入失败可以检测；恶意页面伪造 PAGE_ENV 可能欺骗该项。不是安全证明。
         </p>
       </section>

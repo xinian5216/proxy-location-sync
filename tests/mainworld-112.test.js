@@ -116,6 +116,7 @@ function loadInjected({ bootstrap, permission = "granted" } = {}) {
 
   const listeners = [];
   const created = [];
+  const probeCalls = { worker: 0, blob: 0, objectUrl: 0 };
   const parserEl = new HTMLGeolocationElement();
   created.push(parserEl);
 
@@ -177,6 +178,32 @@ function loadInjected({ bootstrap, permission = "granted" } = {}) {
     GeolocationPositionError,
     HTMLGeolocationElement,
     console,
+    Worker: class Worker {
+      constructor() {
+        probeCalls.worker += 1;
+        const err = new Error(
+          "Failed to construct 'Worker': The URL's scheme (blob) is not permitted by the worker-src Content Security Policy directive.",
+        );
+        err.name = "SecurityError";
+        throw err;
+      }
+    },
+    Blob: class Blob {
+      constructor() {
+        probeCalls.blob += 1;
+        throw new Error("MAIN must not construct Blob for diagnostics");
+      }
+    },
+    URL: Object.assign(
+      function URL() {},
+      {
+        createObjectURL() {
+          probeCalls.objectUrl += 1;
+          throw new Error("MAIN must not createObjectURL for diagnostics");
+        },
+        revokeObjectURL() {},
+      },
+    ),
   };
   sandbox.globalThis = sandbox;
   sandbox.window = sandbox;
@@ -190,7 +217,7 @@ function loadInjected({ bootstrap, permission = "granted" } = {}) {
   if (bootstrap) sandbox.__PLS_BOOTSTRAP__ = bootstrap;
 
   vm.runInNewContext(injectedSrc, sandbox, { filename: "injected.js" });
-  return { sandbox, calls, created, parserEl, NATIVE, isolated, hostTz, hostOffset, perm };
+  return { sandbox, calls, created, probeCalls, parserEl, NATIVE, isolated, hostTz, hostOffset, perm };
 }
 
 function applyReady(sandbox, state) {
@@ -736,6 +763,54 @@ describe("[runtime injected] watchPosition permission revoke", () => {
     sandbox.navigator.geolocation.watchPosition((p) => events.push(p.coords.latitude));
     await wait(30);
     assert.equal(events[events.length - 1], LA.latitude);
+  });
+});
+
+describe("[runtime injected] 1.2.3 PAGE_ENV has no MAIN Worker", () => {
+  test("[runtime injected] PROBE replies PAGE_ENV without Worker / Blob / object URL", () => {
+    const { sandbox, probeCalls } = loadInjected();
+    applyReady(sandbox, TOKYO);
+    const seen = [];
+    sandbox.window.addEventListener("__pls_v1", (ev) => {
+      if (ev && ev.detail && ev.detail.type === "PAGE_ENV") seen.push(ev.detail);
+    });
+    const t0 = Date.now();
+    sandbox.window.dispatchEvent(
+      new sandbox.CustomEvent("__pls_v1", { detail: { type: "PROBE" } }),
+    );
+    assert.equal(seen.length, 1, "PAGE_ENV must be synchronous");
+    assert.ok(Date.now() - t0 < 200, "PAGE_ENV must not wait on a Worker");
+    const env = seen[0];
+    assert.equal(env.type, "PAGE_ENV");
+    assert.equal(env.worker, undefined);
+    assert.ok(!Object.prototype.hasOwnProperty.call(env, "worker"));
+    assert.equal(env.timezone, "Asia/Tokyo");
+    assert.equal(env.geoMode, "ready");
+    assert.equal(typeof env.patchAlive, "boolean");
+    assert.equal(typeof env.language, "string");
+    assert.ok(Array.isArray(env.languages));
+    assert.equal(probeCalls.worker, 0);
+    assert.equal(probeCalls.blob, 0);
+    assert.equal(probeCalls.objectUrl, 0);
+  });
+
+  test("[runtime injected] Gemini/Telegram worker-src CSP still completes PAGE_ENV", () => {
+    const { sandbox, probeCalls } = loadInjected();
+    const seen = [];
+    sandbox.window.addEventListener("__pls_v1", (ev) => {
+      if (ev && ev.detail && ev.detail.type === "PAGE_ENV") seen.push(ev.detail);
+    });
+    sandbox.window.dispatchEvent(
+      new sandbox.CustomEvent("__pls_v1", { detail: { type: "PROBE" } }),
+    );
+    assert.equal(seen.length, 1);
+    assert.equal(seen[0].type, "PAGE_ENV");
+    assert.equal(seen[0].worker, undefined);
+    assert.equal(typeof seen[0].timezone, "string");
+    assert.equal(typeof seen[0].geoMode, "string");
+    assert.equal(probeCalls.worker, 0);
+    assert.equal(probeCalls.blob, 0);
+    assert.equal(probeCalls.objectUrl, 0);
   });
 });
 

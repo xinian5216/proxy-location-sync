@@ -10,7 +10,7 @@ Detect the browser’s real public exit IP and sync webpage geolocation + timezo
 
 不读取 v2rayN、Clash、sing-box、NekoRay 的配置、节点名或进程。换代理软件只要浏览器流量仍走那个出口，扩展就能工作。
 
-**当前版本：1.2.2**
+**当前版本：1.2.4**
 
 | | |
 | --- | --- |
@@ -52,6 +52,10 @@ git clone https://github.com/xinian5216/proxy-location-sync.git
 
 也可以从 [Releases](https://github.com/xinian5216/proxy-location-sync/releases) 下载 `proxy-location-sync.zip`，解压后根目录必须能直接看到 `manifest.json`，再按上面步骤加载。
 
+从 1.2.3 升级：1.2.4 只修工具栏国家代码角标。浏览器重启 / 扩展重载 / MV3 service worker 重建后，根据 storage 里已有的 `countryCode` 立即恢复两位大写角标；同 IP 心跳仍然零 storage。核心 IP / Geo / Date / WebRTC / Diagnostics 未改。
+
+从 1.2.2 升级：1.2.3 只修诊断层 Worker 探测。PAGE_ENV 不再在网页 MAIN 创建 Blob Worker（Gemini / Telegram 等站点的 `worker-src` CSP 不再挡住 Window 探测）。Worker 时区改由扩展 packaged Worker（offscreen / 诊断页）读取。失败记 unknown，不影响 IP / Geo / Date / WebRTC。
+
 从 1.2.1 升级：1.2.2 只修诊断层。同出口的自动诊断不得取消手动「重新诊断」；新出口仍可抢占正在跑的 manual。DNS resolver 必须是合法 IP 字面量（「Bad Gateway」不再被当成 IPv6）；0 个可用 resolver 会 fallback 下一个 Provider，全体失败走 60 秒 TTL。核心 IP / Geo / Date / WebRTC 未改。
 
 从 1.2.0 升级：在 `chrome://extensions` **重新加载**本扩展。1.2.1 只修诊断层：latest-run-wins、pending 出口与 committed Geo 分离、DNS 绑定最新 detected IP、resolver fingerprint、技术失败 60 秒短 TTL。核心 IP / Geo / Date / WebRTC 未改。
@@ -68,7 +72,7 @@ package.json                 # npm test
 README.md
 LICENSE
 background/service-worker.js
-offscreen/                   # IP Echo 自调度 + WebRTC ICE 探测
+offscreen/                   # IP Echo 自调度 + WebRTC ICE 探测 + 扩展 Worker 时区探测
 content/
   isolated.js                # chrome.storage → MAIN CustomEvent（不带 trusted）
   injected.js                # MAIN world：fail-closed geolocation / Date / Intl / Temporal.Now
@@ -94,7 +98,7 @@ node --test tests/*.test.js
 
 不要写成 `node --test extension/tests/*.test.js`——这个仓库根目录没有 `extension/` 这一层。
 
-当前 **212** 项测试。高风险行为（Date / HTMLGeolocation / 权限撤销）会用 Node `vm` **真正执行** `content/injected.js`，而不是只测 helper。环境诊断覆盖 IP/Geo/Timezone/DNS/WebRTC/locale/fonts/Worker 与隔离失败；1.2.1 另覆盖 latest-run-wins、pending vs committed、DNS fingerprint / TTL。1.2.2 另覆盖 manual vs auto 优先级、严格 DNS IP 字面量、0 resolver fallback。
+当前 **230** 项测试。高风险行为（Date / HTMLGeolocation / 权限撤销）会用 Node `vm` **真正执行** `content/injected.js`，而不是只测 helper。环境诊断覆盖 IP/Geo/Timezone/DNS/WebRTC/locale/fonts/Worker 与隔离失败；1.2.1 另覆盖 latest-run-wins、pending vs committed、DNS fingerprint / TTL。1.2.2 另覆盖 manual vs auto 优先级、严格 DNS IP 字面量、0 resolver fallback。1.2.3 另覆盖 MAIN 不再创建 Blob Worker、CSP 下 PAGE_ENV 仍完成、扩展 packaged Worker 探测、mismatch 仍为 warning。1.2.4 另覆盖 SW 重建后从 storage 恢复国家代码角标，同 IP 心跳仍零 storage。
 
 CI：每次 push / pull request 跑同一套测试。
 
@@ -236,7 +240,7 @@ IP 变化后，无论地理来自缓存命中还是新查询，都会把 WebRTC 
 
 **不要声称「检测 IP 就等于所有网站实际出口」。** 全局代理 / 浏览器流量统一出口时最准确。PAC、v2rayN 分流、Clash Rule、sing-box route 下，Echo、Claude、Google 可能各走一条路。扩展无法只通过普通网页 JS 知道某个远端服务器看到的源 IP，除非那个站点自己返回。
 
-## 环境诊断（1.2.2）
+## 环境诊断（1.2.3）
 
 目标不是给浏览器打「像不像日本人」的分数，而是判断模块之间**是否互相矛盾**。
 
@@ -262,7 +266,7 @@ Network 显示 **detected exit**（`pendingIp || ip`）。Geo 尚未 commit 时�
 | DNS | 中国大陆 ISP（Telecom / Unicom / Mobile）配非 CN 出口 → warning。Cloudflare / Google / Quad9 / NextDNS 等 anycast → unknown，**不直接判泄漏** |
 | Locale / 字体 / UA | **只读。** zh-CN、微软雅黑、Windows 都是信息，不是 error |
 | Patch 自检 | **best-effort。** 必须探测已打开的 **http(s)** 页。扩展页 `chrome-extension://` 不受 MAIN world patch，不能用来自检。普通脚本覆盖 / 注入失败可以检测；恶意页面伪造 `PAGE_ENV` 可能欺骗该项。**不是安全证明** |
-| Worker | 网页 Worker 收不到 content script。MAIN 与 Worker 时区不一致 → warning（已知限制，不是产品缺陷） |
+| Worker | **扩展 packaged Worker**（offscreen / 诊断页，`diagnostics/worker-probe.js`）与 Window PAGE_ENV 时区不一致 → warning（网页 Worker 不受 MAIN patch，已知限制，不是产品缺陷）。探测失败 / 无 offscreen → unknown。**不在目标网页 MAIN 创建 Blob Worker**，避免 Gemini / Telegram 等站点 `worker-src` CSP 阻断 PAGE_ENV |
 
 总结只用解释型结果：**Good** / **Needs attention**（切换中为 **Switching**），不发明安全分。
 
@@ -305,6 +309,8 @@ Chrome 扩展读不到操作系统全部 DNS resolver 设置，因此用外部�
 - `chrome.runtime.sendMessage` 失败不得让主循环永久退出
 - 不用假 `RTCPeerConnection` 保活
 - 暂停自动同步：abort 进行中的 fetch / 探测，`closeDocument`
+- 诊断 Worker 探测走打包的 `diagnostics/worker-probe.js`（chrome-extension URL，不用 Blob）。目标网页 MAIN 不再 `new Worker`。失败 → unknown，不影响 Echo
+- 暂停自动同步时 offscreen 已关闭：Worker 记 unknown，PAGE_ENV 仍可从已打开 http(s) 页读取
 - Chrome 116：`hasDocument` 不存在则用 `getContexts`
 
 ## iframe

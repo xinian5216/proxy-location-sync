@@ -6,6 +6,7 @@ import {
   statusMark,
   utcOffsetLabel,
 } from "../lib/diagnostics.js";
+import { probeExtensionWorker, WORKER_PROBE_SCRIPT } from "../lib/worker-probe.js";
 
 const $ = (id) => document.getElementById(id);
 
@@ -46,10 +47,20 @@ async function rerun() {
   try {
     const local = collectBrowserEnvironment();
     local.environment.fonts = detectListedFonts(CJK_FONTS);
+    let worker;
+    try {
+      worker = await probeExtensionWorker({
+        Worker,
+        workerUrl: chrome.runtime.getURL(WORKER_PROBE_SCRIPT),
+      });
+    } catch (err) {
+      worker = { ok: false, reason: String(err && err.message ? err.message : err) };
+    }
     snapshot = await chrome.runtime.sendMessage({
       type: MSG.DIAGNOSTICS_RUN,
       locale: local.locale,
       environment: local.environment,
+      worker,
     });
     render();
   } finally {
@@ -161,8 +172,8 @@ function render() {
   fill(ui.adv, [
     infoRow("Detected fonts", (fonts.detected || []).join(", ") || "未检测（打开本页点重新诊断）"),
     infoRow("中文字体环境", fonts.cjk && fonts.cjk.length ? "Detected" : "Not listed"),
-    row(d.worker, "Main timezone", d.worker && d.worker.mainTimezone),
-    row(d.worker, "Worker timezone", d.worker && d.worker.workerTimezone),
+    row(d.worker, "Window timezone", d.worker && d.worker.mainTimezone),
+    row(d.worker, "Extension Worker timezone", d.worker && d.worker.workerTimezone),
     row(d.worker, "Worker note", d.worker && d.worker.note, true),
     row(d.patch, "MAIN world", d.patch && d.patch.note, true),
     infoRow("Patch self-check", "best-effort（不是安全证明）"),
