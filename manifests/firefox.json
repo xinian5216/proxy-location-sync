@@ -1,0 +1,19 @@
+{
+  "background": {
+    "scripts": ["background/service-worker.js"],
+    "type": "module",
+    "persistent": false
+  },
+  "permissions": [
+    "storage",
+    "alarms",
+    "scripting",
+    "webNavigation"
+  ],
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "proxy-location-sync@xinian5216",
+      "strict_min_version": "128.0"
+    }
+  }
+}

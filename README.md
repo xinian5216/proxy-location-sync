@@ -4,19 +4,19 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-0f766e)](./LICENSE)
 [![Release](https://img.shields.io/github/v/release/xinian5216/proxy-location-sync)](https://github.com/xinian5216/proxy-location-sync/releases)
 
-**Chrome / Edge Manifest V3 扩展。** 检测浏览器**当前真实公网出口 IP**，并把网页里的地理位置、时区同步到这个出口。
+**Chrome / Edge / Firefox Manifest V3 扩展。** 检测浏览器**当前真实公网出口 IP**，并把网页里的地理位置、时区同步到这个出口。
 
 Detect the browser’s real public exit IP and sync webpage geolocation + timezone to that location — without touching your proxy app.
 
 不读取 v2rayN、Clash、sing-box、NekoRay 的配置、节点名或进程。换代理软件只要浏览器流量仍走那个出口，扩展就能工作。
 
-**当前版本：1.2.4**
+**当前版本：1.3.1**
 
 | | |
 | --- | --- |
-| 建议浏览器 | Chrome 120+ / Edge 120+（offscreen 生命周期更稳） |
-| 最低 | Chrome / Edge 116 |
-| 商店上架 | 否。用开发者模式加载本仓库 |
+| Chromium | Chrome / Edge 116+（建议 120+，offscreen 生命周期更稳） |
+| Firefox | Firefox 128+（MAIN world / `match_origin_as_fallback`） |
+| 商店上架 | 否。Chrome/Edge 用开发者模式加载；Firefox 用 `about:debugging` 临时加载。Firefox 正式安装需要 Mozilla 签名 |
 | 许可证 | MIT |
 
 ## 它做什么
@@ -37,20 +37,47 @@ Detect the browser’s real public exit IP and sync webpage geolocation + timezo
 
 ## 快速安装（从本仓库）
 
-本仓库**根目录就是扩展根目录**，能直接看到 `manifest.json`。
+本仓库**根目录就是扩展根目录**，能直接看到 `manifest.json`。开发时默认这份是 **Chromium** 清单。Firefox 请用下面的构建产物，不要把带 `background.service_worker` 的 Chromium 清单直接加载进 Firefox。
 
 ```bash
 git clone https://github.com/xinian5216/proxy-location-sync.git
+cd proxy-location-sync
+npm test
+npm run package
 ```
 
-1. Chrome 打开 `chrome://extensions`，Edge 打开 `edge://extensions`。
+产物在 `dist/`：
+
+- `proxy-location-sync-chromium-1.3.1.zip`
+- `proxy-location-sync-firefox-1.3.1.zip`
+
+也可以 `npm run build:chromium` / `npm run build:firefox` 只生成解压目录（`dist/chromium` / `dist/firefox`）。
+
+### Chrome / Edge
+
+1. 打开 `chrome://extensions` 或 `edge://extensions`。
 2. 打开 **开发者模式** → **加载已解压的扩展程序**。
-3. 选中克隆下来的 `proxy-location-sync` 文件夹（里面有 `manifest.json`）。
+3. 选中克隆下来的仓库根目录（里面有 `manifest.json`），或解压 `proxy-location-sync-chromium-1.3.1.zip` 后选该文件夹。
 4. 工具栏图标角标为国家代码（如 `JP` / `US`）。切代理后数秒应变。
 
 不需要 `.crx`，不需要上架。代理软件保持原样。
 
-也可以从 [Releases](https://github.com/xinian5216/proxy-location-sync/releases) 下载 `proxy-location-sync.zip`，解压后根目录必须能直接看到 `manifest.json`，再按上面步骤加载。
+也可以从 [Releases](https://github.com/xinian5216/proxy-location-sync/releases) 下载 zip，解压后根目录必须能直接看到 `manifest.json`。
+
+### Firefox（临时加载）
+
+Firefox **没有** `background.service_worker`（[MDN 2026-09-05](https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions/manifest.json/background)，bug 1573659），也 **没有** `chrome.offscreen`。Firefox 包用 MV3 **event page**（`background.scripts` + `persistent: false`）。IP 轮询用 `browser.alarms`（`pls-firefox-poll`），不用 `setTimeout` 循环。
+
+1. 解压 `proxy-location-sync-firefox-1.3.1.zip`。
+2. 打开 `about:debugging#/runtime/this-firefox`。
+3. **临时载入附加组件** → 选中解压目录里的 `manifest.json`。
+4. Add-on ID：`proxy-location-sync@xinian5216`。最低 Firefox **128**。
+
+临时载入在浏览器重启后会消失。Firefox Stable **正式安装**需要 [Mozilla 签名](https://extensionworkshop.com/documentation/publish/signing-and-distribution-overview/)（本仓库不提供已签名 `.xpi`）。Developer Edition / Nightly / ESR 可按 Mozilla 文档放宽签名。
+
+从 1.3.0 升级：1.3.1 只修 Firefox Event Page 生命周期。idle 后不再依赖 `setTimeout`；改为 `pls-firefox-poll` alarm（`periodInMinutes = intervalSec / 60`，3 秒 → 0.05）。generic Event Page load 只恢复 state / badge / alarm，不额外 Echo。Chromium 仍走 Offscreen，不改。**2–5 秒持续轮询未在真实 Firefox 里验证。**
+
+从 1.2.4 升级：1.3.0 新增 Firefox 支持，Chromium 行为保持 1.2.4（SW + Offscreen、badge 恢复、fail-closed MAIN）。同一套源码，两套 manifest。
 
 从 1.2.3 升级：1.2.4 只修工具栏国家代码角标。浏览器重启 / 扩展重载 / MV3 service worker 重建后，根据 storage 里已有的 `countryCode` 立即恢复两位大写角标；同 IP 心跳仍然零 storage。核心 IP / Geo / Date / WebRTC / Diagnostics 未改。
 
@@ -67,19 +94,21 @@ git clone https://github.com/xinian5216/proxy-location-sync.git
 ## 仓库结构
 
 ```
-manifest.json                # MV3 清单
-package.json                 # npm test
+manifest.json                # 开发时默认 Chromium MV3 清单（由 npm run build:chromium 生成）
+manifests/                   # 共享 base + chromium / firefox overlay
+package.json                 # npm test / build / package
 README.md
 LICENSE
-background/service-worker.js
-offscreen/                   # IP Echo 自调度 + WebRTC ICE 探测 + 扩展 Worker 时区探测
+background/service-worker.js # Chromium SW 与 Firefox event page 共用
+offscreen/                   # Chromium：IP Echo + WebRTC + Worker。Firefox 包内保留但不加载
 content/
-  isolated.js                # chrome.storage → MAIN CustomEvent（不带 trusted）
+  isolated.js                # storage → MAIN CustomEvent（不带 trusted；ext 适配）
   injected.js                # MAIN world：fail-closed geolocation / Date / Intl / Temporal.Now
 popup/  options/  diagnostics/
-lib/                         # echo / geo / timezone / webrtc / diagnostics / dns
+lib/                         # echo / geo / timezone / webrtc / diagnostics / dns / browser-api
 tests/                       # node --test；含 frames.html
 icons/
+scripts/build-extension.mjs  # 生成 dist/chromium 与 dist/firefox 及两个 zip
 ```
 
 ## 测试
@@ -88,6 +117,10 @@ icons/
 
 ```bash
 npm test
+npm run build
+npm run build:chromium
+npm run build:firefox
+npm run package
 ```
 
 或：
@@ -98,21 +131,21 @@ node --test tests/*.test.js
 
 不要写成 `node --test extension/tests/*.test.js`——这个仓库根目录没有 `extension/` 这一层。
 
-当前 **230** 项测试。高风险行为（Date / HTMLGeolocation / 权限撤销）会用 Node `vm` **真正执行** `content/injected.js`，而不是只测 helper。环境诊断覆盖 IP/Geo/Timezone/DNS/WebRTC/locale/fonts/Worker 与隔离失败；1.2.1 另覆盖 latest-run-wins、pending vs committed、DNS fingerprint / TTL。1.2.2 另覆盖 manual vs auto 优先级、严格 DNS IP 字面量、0 resolver fallback。1.2.3 另覆盖 MAIN 不再创建 Blob Worker、CSP 下 PAGE_ENV 仍完成、扩展 packaged Worker 探测、mismatch 仍为 warning。1.2.4 另覆盖 SW 重建后从 storage 恢复国家代码角标，同 IP 心跳仍零 storage。
+当前 **272** 项测试。高风险行为（Date / HTMLGeolocation / 权限撤销）会用 Node `vm` **真正执行** `content/injected.js`，而不是只测 helper。环境诊断覆盖 IP/Geo/Timezone/DNS/WebRTC/locale/fonts/Worker 与隔离失败；1.2.1 另覆盖 latest-run-wins、pending vs committed、DNS fingerprint / TTL。1.2.2 另覆盖 manual vs auto 优先级、严格 DNS IP 字面量、0 resolver fallback。1.2.3 另覆盖 MAIN 不再创建 Blob Worker、CSP 下 PAGE_ENV 仍完成、扩展 packaged Worker 探测、mismatch 仍为 warning。1.2.4 另覆盖 SW 重建后从 storage 恢复国家代码角标，同 IP 心跳仍零 storage。1.3.0 另覆盖 Chromium/Firefox adapter、分离 manifest、MAIN inject、Date.parse 跟本引擎原生解析、缺 HTMLGeolocationElement 时显示 Not supported。1.3.1 另覆盖 Firefox Event Page 用 `pls-firefox-poll` alarm（不用 setTimeout）、load 不重复 Echo、startup 重建 alarm、同 IP 零 storage、慢 Geo 不挡下一轮 Echo。
 
-CI：每次 push / pull request 跑同一套测试。
+这些是 **Node 单元测试**，不是把 MV3 扩展加载进真实 Chrome / Firefox 的 E2E。CI：每次 push / pull request 跑同一套测试。
 
 ## 权限
 
-| 权限 | 用途 |
-| --- | --- |
-| `storage` | 设置、当前出口、按 IP 的地理缓存、诊断结果 |
-| `alarms` | 每分钟唤醒 service worker；约 15 分钟刷新 DNS 诊断 |
-| `offscreen` | 短间隔轮询 + WebRTC ICE 探测 |
-| `scripting` + `webNavigation` | 导航提交时把当前状态注入 MAIN world |
-| `host_permissions: http(s)://*/*` | 请求 IP/地理/DNS 观测接口；向网页注入脚本 |
+| 权限 | 用途 | Chromium | Firefox |
+| --- | --- | --- | --- |
+| `storage` | 设置、当前出口、按 IP 的地理缓存、诊断结果 | 是 | 是 |
+| `alarms` | Chromium：每分钟唤醒 SW、15 分钟 DNS。Firefox：另加 `pls-firefox-poll`（`periodInMinutes = intervalSec/60`） | 是 | 是 |
+| `offscreen` | 短间隔轮询 + WebRTC ICE 探测 | 是 | **否**（未知权限，不声明） |
+| `scripting` + `webNavigation` | 导航提交时把当前状态注入 MAIN world | 是 | 是（Firefox 128+ `world: MAIN`） |
+| `host_permissions: http(s)://*/*` | 请求 IP/地理/DNS 观测接口；向网页注入脚本 | 是 | 是 |
 
-**没有** `tabs`、`debugger`、`privacy`。不会出现「正在调试此浏览器」。不读历史、Cookie、账号。角标走 `chrome.action`。向已打开标签页推送状态时用 `chrome.tabs.query({})` 取 tabId（不读 title/url/favicon），**不申请** `tabs` 权限。SW 重启后仍能找到旧标签。
+**没有** `tabs`、`debugger`、`privacy`。不会出现「正在调试此浏览器」。不读历史、Cookie、账号。角标走 `action`。向已打开标签页推送状态时用 `tabs.query({})` 取 tabId（不读 title/url/favicon），**不申请** `tabs` 权限。后台重启后仍能找到旧标签。
 
 ## 架构
 
@@ -120,16 +153,17 @@ CI：每次 push / pull request 跑同一套测试。
 v2rayN / Clash / sing-box 切节点
         │  浏览器网络栈变了
         ▼
-offscreen 自调度 IP Echo（等上一轮 Echo ACK 再等 interval；不等 Geo）
+Chromium：offscreen 自调度 IP Echo（等上一轮 Echo ACK 再等 interval；不等 Geo）
+Firefox：event page 自己轮询（无 Offscreen 等价物，不模拟 Offscreen）
   detectPublicIp()          ← 首选 api64.ipify.org（IPv4/IPv6）
         │  得到 targetIp，立即 ACK
         ▼
-service worker  内存心跳 / 独立 Geo task
+background  内存心跳 / 独立 Geo task
   同 IP + ready → 不写 storage
   新 IP → abort 旧 Geo，启动 Geo B
         │  查不到就保留上一份完整 state，Geolocation 进入 pending/error
         ▼
-chrome.storage.local  { settings, state, geoCache }
+storage.local  { settings, state, geoCache }
         │  storage.onChanged
         ▼
 每个 frame 的 isolated content script
@@ -138,7 +172,7 @@ chrome.storage.local  { settings, state, geoCache }
 MAIN world injected.js
   geolocation: pending | ready | error（永不因页面字段进入 native disabled）
   Date / Intl / Temporal.Now（有虚拟时区之后）
-  HTMLGeolocationElement position/error（Chrome 144+）
+  HTMLGeolocationElement position/error（Chrome 144+；Firefox 无此 API → Not supported）
 ```
 
 检测绑定的是 **IP Echo Provider 这次请求实际使用的出口**，不是「当前连接的随便一个地理接口」。东京的 IP 绝不会配上洛杉矶的坐标。
@@ -186,7 +220,7 @@ Echo 健康与 Geo 健康是分开的：出口探测正常、地理查询失败�
 - `Date()`（不加 `new`）→ 出口时区的 `toString`
 - `Date.prototype.getYear` / `setYear`（含 0–99 → 1900+y）走虚拟时区
 - `new Date(y, m, d, h, …)` → 出口墙上时间（含 DST 缺口/重叠，按 Temporal *compatible*：缺口取 later，重叠取 earlier）
-- `Date.parse` / `new Date("2026-01-15T12:00:00")` 无时区偏移时按出口墙时；`Z` / `GMT` / `±HH:MM` 仍是绝对时间；纯 `YYYY-MM-DD` 是 UTC 午夜
+- `Date.parse` / `new Date("2026-01-15T12:00:00")` 无时区偏移时按出口墙时；`Z` / `GMT` / `±HH:MM` 以及 `EST`/`EDT`/`CST`/`CDT`/`MST`/`MDT`/`PST`/`PDT` 仍走**当前浏览器的原生 Date.parse**（绝对时间）。不要把 Chromium/V8 的 EST 解析结果套到 Firefox 上。纯 `YYYY-MM-DD` 是 UTC 午夜
 - 非 ISO 字符串（如 `01/01/2026 00:00:00`、`Jan 1 2026 00:00:00`）先走原生解析得到墙时分量，再按出口时区还原
 - `toLocaleString` / `toLocaleDateString` / `toLocaleTimeString` 走原生实现并注入 `timeZone`
 - `getMilliseconds` 走原生（负 epoch 仍是 0–999）
@@ -299,27 +333,43 @@ Chrome 扩展读不到操作系统全部 DNS resolver 设置，因此用外部�
 
 这不是 Anti-Detect Browser。不会改 `navigator.language`、User-Agent / UA-CH、字体、Canvas、WebGL，也不会做「Claude 专用安全模式」。
 
-## Offscreen
+## Offscreen（仅 Chromium）
 
 - 理由是诚实的 `WEB_RTC`（确实做 ICE 探测）
 - 轮询：上一轮结束 → 等 interval → 下一轮。`pollInFlight` 互斥。IP Echo 与 Geo Lookup 解耦：不等 Geo 才能进入下一轮探测
 - Offscreen 与 service worker fallback **互斥**：offscreen 创建失败才启动 fallback；之后一旦 offscreen 恢复，立即停掉 fallback
 - 全部 IP Echo Provider 冷却时：不 fetch；loop 睡到 `nextRetryAt`，但最长 30 秒再醒（不是睡到数分钟后的 cooldown 结束）。manual detect 可 bypass。
 - 同一 pending IP 的 Geo 失败会记 `nextGeoRetryAt`，3 秒一次的 IP echo 不会每次重打 Geo
-- `chrome.runtime.sendMessage` 失败不得让主循环永久退出
+- `runtime.sendMessage` 失败不得让主循环永久退出
 - 不用假 `RTCPeerConnection` 保活
 - 暂停自动同步：abort 进行中的 fetch / 探测，`closeDocument`
-- 诊断 Worker 探测走打包的 `diagnostics/worker-probe.js`（chrome-extension URL，不用 Blob）。目标网页 MAIN 不再 `new Worker`。失败 → unknown，不影响 Echo
+- 诊断 Worker 探测走打包的 `diagnostics/worker-probe.js`（扩展 URL，不用 Blob）。目标网页 MAIN 不再 `new Worker`。失败 → unknown，不影响 Echo
 - 暂停自动同步时 offscreen 已关闭：Worker 记 unknown，PAGE_ENV 仍可从已打开 http(s) 页读取
 - Chrome 116：`hasDocument` 不存在则用 `getContexts`
 
+**Firefox Event Page 轮询（1.3.1）：** 没有 Offscreen。不模拟。
+
+[MDN Background scripts（2026-07-27）](https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions/Background_scripts)：Event Page idle 后 **DOM `setTimeout` 不会保持**，要用 [alarms](https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions/API/alarms) 唤醒。[MDN setTimeout（2026-09-03）](https://developer.mozilla.org/en-US/docs/Web/API/Window/setTimeout) 同样写明 WebExtension 后台不要依赖 `setTimeout`。[MDN alarms](https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions/API/alarms)：alarms **不跨浏览器 session 持久化**，所以 `runtime.onInstalled` / `runtime.onStartup` / 设置变化时会重建 `pls-firefox-poll`。
+
+- `periodInMinutes = intervalSec / 60`（2s→0.033…，3s→0.05，5s→0.083…）
+- 每次 alarm **只做一次 IP Echo**；Geo 仍异步，慢 Geo 不挡住下一次 Echo
+- generic Event Page load 只 hydrate / 恢复 badge / 确保 alarm，**不**额外 Echo（避免 alarm 唤醒时 double detect）
+- `enabled=false` 清除 `pls-firefox-poll`；改 `intervalSec` 才重建（周期没变则 keep，免得每分钟 keepalive 把计时器重置）
+- Firefox 源码 `ext-alarms.js`：`delay = periodInMinutes * 60 * 1000`，**没有** Chrome 那种 30 秒下限
+- **本仓库没有在真实 Firefox 128+ 里跑过几分钟的 suspend/wake E2E，因此不能声称 2–5 秒持续轮询已经验证。** 若你实测被系统节流，以实测为准并请在 README 里记下间隔。
+- WebRTC / Worker 仍在 event page 进程内跑；Worker 用打包的 `diagnostics/worker-probe.js`。失败 → unknown。
+
+Chromium 短间隔仍走 Offscreen，这条路径 1.3.1 未改。
+
 ## iframe
 
-Manifest 使用 `all_frames` + `match_about_blank` + `match_origin_as_fallback`。
+Manifest 使用 `all_frames` + `match_about_blank` + `match_origin_as_fallback`（Firefox 128+ 支持 MAIN world 与 `match_origin_as_fallback`）。
 
 由匹配 http/https origin 创建的 `data:` / `blob:` / `filesystem:` / `about:` frame，可通过 `match_origin_as_fallback` 覆盖；**独立、无匹配 initiator/origin 的 opaque frame 不保证覆盖。**
 
-打开 `tests/frames.html`（需通过 http/https 访问）可看 about / data / blob 三个 frame 的时区是否与顶层一致。若实测与文档不一致，以当前 Chromium 行为 + [Chrome 文档](https://developer.chrome.com/docs/extensions/develop/concepts/content-scripts) 为准。
+**Firefox 已知差异（MDN content_scripts，2026-06-21）：** 即使 `run_at: document_start`，**空的 about:blank iframe 也不会在 document_start 注入 content script**。扩展用 `webNavigation.onCommitted` + `scripting.executeScript({ world: "MAIN", injectImmediately: true })` 补这一段。仍可能有极短窗口。
+
+打开 `tests/frames.html`（需通过 http/https 访问）可看 about / data / blob 三个 frame 的时区是否与顶层一致。若实测与文档不一致，以当前浏览器行为 + [MDN content_scripts](https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions/manifest.json/content_scripts) / [Chrome 文档](https://developer.chrome.com/docs/extensions/develop/concepts/content-scripts) 为准。
 
 ## MAIN world / CustomEvent
 
@@ -383,14 +433,15 @@ new Date(2026, 0, 15, 12, 0, 0).toString()
 - IP 变化才查地理；缓存 7 天；坐标按 IP 稳定
 - fail-closed geolocation（含暂停自动同步期间的 watch/get、A→B pending、error 不假装旧坐标）
 - 常见 Date / Intl / Temporal.Now 时区，以及 `Date.prototype.constructor` / `Intl.DateTimeFormat.prototype.constructor`
-- Chrome 144+ `<geolocation>` 的 position/error（watch 的 location 事件只能合成，isTrusted=false）
+- Chrome 144+ `<geolocation>` 的 position/error（watch 的 location 事件只能合成，isTrusted=false）。Firefox 没有 `HTMLGeolocationElement`，诊断显示 **Not supported**，不模拟该 API
 - 由匹配 origin 创建的 iframe（含部分 about/data/blob）
 - 多源容错、generation 竞态、冷却、禁用时停轮询
 - WebRTC 泄漏**检测**（绑定当前出口 IP）
 
 **只能近似**
 
-- MV3 service worker 会休眠。短间隔在 offscreen；极端省电仍可能被限制。`chrome.alarms` 每分钟兜底。
+- Chromium：MV3 service worker 会休眠。短间隔在 offscreen；极端省电仍可能被限制。`alarms` 每分钟兜底。
+- Firefox：event page 同样非 persistent，空闲会挂起；短间隔在 background 自己的 loop + `alarms` 兜底。没有 Offscreen。
 - `document_start` 仍有竞态：同步内联脚本可能在状态到达前跑几毫秒。**地理位置在 pending 时不会泄漏**；`Date()` 在还没有任何虚拟时区前仍可能是主机时区。
 - 新 IP 已检测到但 Geo 尚未就绪期间，Date/Intl 暂时保留上一个虚拟时区；Geolocation 不再声称旧坐标是当前坐标。
 - 为弹出授权框必须调用原生 geolocation；真实坐标存在于内部闭包。若页面 hook 了更底层的实现，仍可能观察到这次调用。
@@ -402,10 +453,11 @@ new Date(2026, 0, 15, 12, 0, 0).toString()
 
 **做不到（不假装）**
 
-- `chrome://`、`edge://`、商店页、内置 PDF 查看器
+- `chrome://`、`edge://`、`about:` 浏览器页、商店页、内置 PDF 查看器
 - 网页自己的 Worker / SharedWorker / Service Worker（content script 进不去）
 - 无匹配 initiator 的 opaque `data:` / `blob:` frame（不保证注入）
-- 不用 `chrome.debugger` 就不能改浏览器界面时区、DevTools 时区（用了会长期显示「正在调试」）
+- Firefox：空 `about:blank` iframe 在 `document_start` **不会**注入 content script（MDN）；靠 `webNavigation` 补注，仍有竞态
+- 不用 `debugger` 就不能改浏览器界面时区、DevTools 时区（用了会长期显示「正在调试」）
 - 不能从本机代理软件读节点名，也不能按每个目标网站的 PAC/分流规则分别伪装
 - 不拦截、不修改 WebRTC
 - 无法把 IP 定位伪装成 5 米 GPS
@@ -417,17 +469,38 @@ new Date(2026, 0, 15, 12, 0, 0).toString()
 - 地理缓存 TTL **7 天**，最多 50 个 IP。过期后重新查询。key 为规范化 IP。
 - 默认定位模式 **raw**（出口 IP、地理库、Geolocation、Timezone 尽量一致）。城市随机偏移是可选。
 
+## 浏览器差异（1.3.1）
+
+| | Chromium | Firefox |
+| --- | --- | --- |
+| 后台 | Service Worker + Offscreen | Event page（`background.scripts`，非 persistent） |
+| 最低版本 | Chrome / Edge 116 | Firefox 128 |
+| 清单 | 不能带 `background.scripts`（Chrome 116–120 会拒载） | 不能用 `background.service_worker`（bug 1573659） |
+| IP 轮询 | Offscreen 自调度 | `pls-firefox-poll` alarm（**2–5 秒频率未经真实 Firefox 验证**） |
+| WebRTC / Worker | Offscreen 文档 | background 进程内 |
+| MAIN world | 是 | 是（128+） |
+| `HTMLGeolocationElement` | Chrome 144+ | 不存在 → **Not supported** |
+| `Date.parse` EST 等缩写 | 跟 V8 原生 | 跟 SpiderMonkey 原生，**不强套 Chromium 结果** |
+| 空 about:blank iframe `document_start` | 通常可注入 | MDN：不会在 document_start 注入；靠 webNavigation 补 |
+| 签名 | 开发者模式即可 | 临时加载 OK；正式安装需 Mozilla 签名 |
+| Add-on ID | （无） | `proxy-location-sync@xinian5216` |
+
+Chrome 116–120 若把 `scripts` 和 `service_worker` 写在同一份 MV3 manifest 会拒载，因此 **必须两套 overlay**，不能合成一份「通吃」清单。
+
 ## 开发
 
 改代码后：
 
 ```bash
-node --test tests/*.test.js
+npm test
+npm run package
 ```
 
-加载已解压的扩展后，每次改 `content/`、`background/`、`offscreen/` 都要在 `chrome://extensions` 点**重新加载**，并刷新已打开的网页。
+Chromium：加载已解压扩展后，每次改 `content/`、`background/`、`offscreen/` 都要在 `chrome://extensions` 点**重新加载**，并刷新已打开的网页。
 
-Issue / PR 欢迎。请说明 Chrome/Edge 版本、是否全局代理、以及 `chrome://extensions` 里的报错。
+Firefox：在 `about:debugging` 点 Reload，并刷新已打开的网页。
+
+Issue / PR 欢迎。请说明 Chrome / Edge / Firefox 版本、是否全局代理、以及扩展管理页里的报错。
 
 ## 许可证
 

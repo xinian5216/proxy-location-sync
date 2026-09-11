@@ -1,4 +1,5 @@
 import { INTERVAL_CHOICES, MSG } from "../lib/constants.js";
+import { ext } from "../lib/browser-api.js";
 import { statusMark, utcOffsetLabel } from "../lib/diagnostics.js";
 import { formatOffsetLabel, getOffsetMinutes } from "../lib/timezone.js";
 import { viewWebRtc } from "../lib/webrtc.js";
@@ -54,10 +55,10 @@ async function init() {
   ui.enabled.addEventListener("change", () => patch({ enabled: ui.enabled.checked }));
   ui.detect.addEventListener("click", () => run(MSG.DETECT_NOW, ui.detect));
   ui.resync.addEventListener("click", () => run(MSG.RESYNC, ui.resync));
-  ui.options.addEventListener("click", () => chrome.runtime.sendMessage({ type: MSG.OPEN_OPTIONS }));
-  ui.diagnostics.addEventListener("click", () => chrome.runtime.sendMessage({ type: MSG.OPEN_DIAGNOSTICS }));
+  ui.options.addEventListener("click", () => ext.runtime.sendMessage({ type: MSG.OPEN_OPTIONS }));
+  ui.diagnostics.addEventListener("click", () => ext.runtime.sendMessage({ type: MSG.OPEN_DIAGNOSTICS }));
 
-  chrome.storage.onChanged.addListener((changes, area) => {
+  ext.storage.onChanged.addListener((changes, area) => {
     if (area !== "local") return;
     if (changes.state) snapshot.state = changes.state.newValue;
     if (changes.settings) snapshot.settings = { ...snapshot.settings, ...changes.settings.newValue };
@@ -65,20 +66,20 @@ async function init() {
     render();
   });
 
-  snapshot = await chrome.runtime.sendMessage({ type: MSG.GET_SNAPSHOT });
+  snapshot = await ext.runtime.sendMessage({ type: MSG.GET_SNAPSHOT });
   render();
   clock = setInterval(renderRelative, 1000);
 }
 
 async function patch(partial) {
-  snapshot = await chrome.runtime.sendMessage({ type: MSG.SETTINGS_PATCH, patch: partial });
+  snapshot = await ext.runtime.sendMessage({ type: MSG.SETTINGS_PATCH, patch: partial });
   render();
 }
 
 async function run(type, button) {
   button.disabled = true;
   try {
-    snapshot = await chrome.runtime.sendMessage({ type });
+    snapshot = await ext.runtime.sendMessage({ type });
     render();
   } finally {
     button.disabled = false;

@@ -1,4 +1,5 @@
 import { MSG } from "../lib/constants.js";
+import { ext } from "../lib/browser-api.js";
 import {
   CJK_FONTS,
   collectBrowserEnvironment,
@@ -6,6 +7,7 @@ import {
   statusMark,
   utcOffsetLabel,
 } from "../lib/diagnostics.js";
+import { htmlGeolocationLabel } from "../lib/platform-runtime.js";
 import { probeExtensionWorker, WORKER_PROBE_SCRIPT } from "../lib/worker-probe.js";
 
 const $ = (id) => document.getElementById(id);
@@ -30,14 +32,14 @@ init();
 
 async function init() {
   ui.rerun.addEventListener("click", rerun);
-  ui.options.addEventListener("click", () => chrome.runtime.sendMessage({ type: MSG.OPEN_OPTIONS }));
-  chrome.storage.onChanged.addListener((changes, area) => {
+  ui.options.addEventListener("click", () => ext.runtime.sendMessage({ type: MSG.OPEN_OPTIONS }));
+  ext.storage.onChanged.addListener((changes, area) => {
     if (area !== "local") return;
     if (changes.diagnostics) snapshot.diagnostics = changes.diagnostics.newValue;
     if (changes.state) snapshot.state = changes.state.newValue;
     render();
   });
-  snapshot = await chrome.runtime.sendMessage({ type: MSG.GET_SNAPSHOT });
+  snapshot = await ext.runtime.sendMessage({ type: MSG.GET_SNAPSHOT });
   render();
 }
 
@@ -51,12 +53,12 @@ async function rerun() {
     try {
       worker = await probeExtensionWorker({
         Worker,
-        workerUrl: chrome.runtime.getURL(WORKER_PROBE_SCRIPT),
+        workerUrl: ext.runtime.getURL(WORKER_PROBE_SCRIPT),
       });
     } catch (err) {
       worker = { ok: false, reason: String(err && err.message ? err.message : err) };
     }
-    snapshot = await chrome.runtime.sendMessage({
+    snapshot = await ext.runtime.sendMessage({
       type: MSG.DIAGNOSTICS_RUN,
       locale: local.locale,
       environment: local.environment,
@@ -177,7 +179,7 @@ function render() {
     row(d.worker, "Worker note", d.worker && d.worker.note, true),
     row(d.patch, "MAIN world", d.patch && d.patch.note, true),
     infoRow("Patch self-check", "best-effort（不是安全证明）"),
-    infoRow("HTMLGeolocationElement", d.patch && d.patch.htmlGeo ? "present" : "not in this page"),
+    infoRow("HTMLGeolocationElement", htmlGeolocationLabel(d.patch && d.patch.htmlGeo)),
     infoRow("geoMode (page)", d.patch && d.patch.geoMode),
     infoRow("Canvas", canvasAvailable() ? "available" : "n/a"),
     infoRow("WebGL", readWebGl()),

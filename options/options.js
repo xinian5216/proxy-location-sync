@@ -1,4 +1,5 @@
 import { INTERVAL_CHOICES, MSG, STORAGE_KEYS } from "../lib/constants.js";
+import { ext } from "../lib/browser-api.js";
 import { viewWebRtc } from "../lib/webrtc.js";
 
 const $ = (id) => document.getElementById(id);
@@ -22,22 +23,22 @@ async function init() {
 
   $("enabled").addEventListener("change", () => patch({ enabled: $("enabled").checked }));
   $("webrtcProbe").addEventListener("change", () => patch({ webrtcProbe: $("webrtcProbe").checked }));
-  $("detect").addEventListener("click", () => chrome.runtime.sendMessage({ type: MSG.DETECT_NOW }).then(apply));
-  $("resync").addEventListener("click", () => chrome.runtime.sendMessage({ type: MSG.RESYNC }).then(apply));
-  $("diagnostics").addEventListener("click", () => chrome.runtime.sendMessage({ type: MSG.OPEN_DIAGNOSTICS }));
+  $("detect").addEventListener("click", () => ext.runtime.sendMessage({ type: MSG.DETECT_NOW }).then(apply));
+  $("resync").addEventListener("click", () => ext.runtime.sendMessage({ type: MSG.RESYNC }).then(apply));
+  $("diagnostics").addEventListener("click", () => ext.runtime.sendMessage({ type: MSG.OPEN_DIAGNOSTICS }));
   $("clear").addEventListener("click", async () => {
-    await chrome.storage.local.set({ [STORAGE_KEYS.geoCache]: {} });
-    apply(await chrome.runtime.sendMessage({ type: MSG.RESYNC }));
+    await ext.storage.local.set({ [STORAGE_KEYS.geoCache]: {} });
+    apply(await ext.runtime.sendMessage({ type: MSG.RESYNC }));
   });
 
-  chrome.storage.onChanged.addListener((changes, area) => {
+  ext.storage.onChanged.addListener((changes, area) => {
     if (area !== "local") return;
     if (changes.state) snapshot.state = changes.state.newValue;
     if (changes.settings) snapshot.settings = { ...snapshot.settings, ...changes.settings.newValue };
     render();
   });
 
-  apply(await chrome.runtime.sendMessage({ type: MSG.GET_SNAPSHOT }));
+  apply(await ext.runtime.sendMessage({ type: MSG.GET_SNAPSHOT }));
 }
 
 function apply(next) {
@@ -46,7 +47,7 @@ function apply(next) {
 }
 
 async function patch(partial) {
-  apply(await chrome.runtime.sendMessage({ type: MSG.SETTINGS_PATCH, patch: partial }));
+  apply(await ext.runtime.sendMessage({ type: MSG.SETTINGS_PATCH, patch: partial }));
 }
 
 function render() {

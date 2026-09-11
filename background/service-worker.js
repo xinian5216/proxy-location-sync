@@ -1,19 +1,26 @@
 /**
- * MV3 service worker。
+ * Chromium：MV3 service worker。Firefox：MV3 event page（同一文件）。
  *
  * IP Echo 快速 ACK；Geo lookup 是独立可取消任务。
- * 同 IP 心跳不写 chrome.storage.local。
+ * 同 IP 心跳不写 storage。
  * 诊断与核心同步隔离：失败只写 unknown，绝不 await 进 persistFromPipeline。
+ *
+ * Firefox 无 Offscreen：用 `pls-firefox-poll` alarm 唤醒 Event Page 做 Echo。
+ * 不得用 setTimeout 循环（MDN：idle 后 DOM timer 不可靠）。
+ * generic Event Page load 只 hydrate / badge / 确保 alarm，不额外 Echo。
+ * 异常一律 fail-closed，不得把网页退回真实 GPS。
  */
 
 import {
   ALARM_DNS,
+  ALARM_FIREFOX_POLL,
   ALARM_KEEPALIVE,
   DEFAULT_SETTINGS,
   DNS_ALARM_MINUTES,
   MSG,
   STORAGE_KEYS,
 } from "../lib/constants.js";
+import { ext, isServiceWorkerScope, shouldUseOffscreen } from "../lib/browser-api.js";
 import { collectBrowserEnvironment } from "../lib/diagnostics.js";
 import { createDiagnosticsController } from "../lib/diagnostics-runner.js";
 import { createDnsProbe } from "../lib/dns-providers.js";
@@ -22,10 +29,17 @@ import { applyLocationMode } from "../lib/geo.js";
 import { lookupGeo } from "../lib/geo-providers.js";
 import { isPublicIp } from "../lib/ip-compare.js";
 import { detectPublicIp, ipHealth } from "../lib/ip-providers.js";
+import {
+  planFirefoxPolling,
+  shouldImmediateEcho,
+} from "../lib/firefox-poll.js";
+import { pickBackgroundPoller, runWebrtcProbe, runWorkerProbe } from "../lib/platform-runtime.js";
 import { nextPollDelayMs } from "../lib/poll-sleep.js";
 import { createPollerSupervisor } from "../lib/poller-mode.js";
 import { collectTabIds } from "../lib/tab-targets.js";
 import { updateBadge } from "../lib/badge.js";
+import { probeWebRtc } from "../lib/webrtc.js";
+import { probeExtensionWorker, WORKER_PROBE_SCRIPT } from "../lib/worker-probe.js";
 
 const OFFSCREEN_URL = "offscreen/offscreen.html";
 const DIAGNOSTICS_URL = "diagnostics/diagnostics.html";
@@ -34,12 +48,13 @@ const poller = createPollerSupervisor();
 let creatingOffscreen = null;
 let swLoop = null;
 let swLoopStopped = true;
+let prepareGate = null;
 const seenTabs = new Map();
 
 const pipeline = createExitPipeline({
   lookupGeo,
   persist: persistFromPipeline,
-  probeWebrtc: (ip) => tellOffscreen({ type: MSG.OFFSCREEN_WEBRTC, ip }),
+  probeWebrtc: (ip) => routeWebrtc(ip),
 });
 
 const dnsProbe = createDnsProbe();
@@ -47,30 +62,33 @@ const diagnosticsCtrl = createDiagnosticsController({
   lookupDns: (opts) => dnsProbe.lookup(opts),
   persist: persistDiagnostics,
   probePage: probeHttpPageEnv,
-  probeWorker: probeExtensionWorkerOffscreen,
+  probeWorker: probeWorkerRouted,
 });
 
-chrome.runtime.onInstalled.addListener(() => {
+ext.runtime.onInstalled.addListener(() => {
   void boot("installed");
 });
-chrome.runtime.onStartup.addListener(() => {
+ext.runtime.onStartup.addListener(() => {
   void boot("startup");
 });
-self.addEventListener("activate", () => {
-  void boot("activate");
-});
+if (isServiceWorkerScope()) {
+  self.addEventListener("activate", () => {
+    void boot("activate");
+  });
+}
 
-chrome.alarms.onAlarm.addListener((alarm) => {
+ext.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === ALARM_KEEPALIVE) void onKeepAlive();
   if (alarm.name === ALARM_DNS) void runDiagnosticsSafe({ force: false, reason: "auto" });
+  if (alarm.name === ALARM_FIREFOX_POLL) void onFirefoxPoll();
 });
 
-chrome.webNavigation.onCommitted.addListener((details) => {
+ext.webNavigation.onCommitted.addListener((details) => {
   if (details && details.tabId >= 0) seenTabs.set(details.tabId, Date.now());
   void injectBootstrap(details);
 });
 
-chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+ext.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   void handleMessage(message)
     .then((result) => sendResponse(stripPromises(result)))
     .catch((err) => {
@@ -79,7 +97,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   return true;
 });
 
-chrome.storage.onChanged.addListener((changes, area) => {
+ext.storage.onChanged.addListener((changes, area) => {
   if (area !== "local") return;
   if (changes[STORAGE_KEYS.settings]) {
     void onSettingsChanged(changes[STORAGE_KEYS.settings].newValue);
@@ -97,7 +115,7 @@ async function persistFromPipeline({ state, geoCache }) {
   const payload = {};
   if (state !== undefined) payload[STORAGE_KEYS.state] = state;
   if (geoCache !== undefined) payload[STORAGE_KEYS.geoCache] = geoCache;
-  if (Object.keys(payload).length) await chrome.storage.local.set(payload);
+  if (Object.keys(payload).length) await ext.storage.local.set(payload);
   const snap = pipeline.snapshot();
   await refreshAction(snap.state, snap.settings);
   scheduleDiagnostics("state-change");
@@ -108,7 +126,7 @@ function scheduleDiagnostics(reason = "auto") {
 }
 
 async function persistDiagnostics(diag) {
-  await chrome.storage.local.set({ [STORAGE_KEYS.diagnostics]: diag });
+  await ext.storage.local.set({ [STORAGE_KEYS.diagnostics]: diag });
 }
 
 async function runDiagnosticsSafe({ force = false, reason, locale, environment, worker } = {}) {
@@ -132,7 +150,7 @@ async function runDiagnosticsSafe({ force = false, reason, locale, environment, 
 async function probeHttpPageEnv() {
   let tabs = [];
   try {
-    tabs = await chrome.tabs.query({ url: ["http://*/*", "https://*/*"] });
+    tabs = await ext.tabs.query({ url: ["http://*/*", "https://*/*"] });
   } catch {
     return null;
   }
@@ -140,7 +158,7 @@ async function probeHttpPageEnv() {
   for (const tab of ordered) {
     if (typeof tab.id !== "number") continue;
     try {
-      const res = await chrome.tabs.sendMessage(tab.id, { type: MSG.PAGE_ENV_PROBE }, { frameId: 0 });
+      const res = await ext.tabs.sendMessage(tab.id, { type: MSG.PAGE_ENV_PROBE }, { frameId: 0 });
       if (res && res.env) return res.env;
     } catch {
       /* 该标签没有 content script */
@@ -154,7 +172,7 @@ async function probeExtensionWorkerOffscreen() {
     if (!(await hasOffscreenDocument())) {
       return { ok: false, reason: "Worker unavailable" };
     }
-    const result = await chrome.runtime.sendMessage({ type: MSG.OFFSCREEN_WORKER_PROBE });
+    const result = await ext.runtime.sendMessage({ type: MSG.OFFSCREEN_WORKER_PROBE });
     if (!result || typeof result !== "object") {
       return { ok: false, reason: "Worker unavailable" };
     }
@@ -165,24 +183,80 @@ async function probeExtensionWorkerOffscreen() {
   }
 }
 
-async function boot(reason) {
+async function probeExtensionWorkerLocal() {
+  try {
+    if (typeof Worker !== "function") {
+      return { ok: false, reason: "Worker unavailable" };
+    }
+    return await probeExtensionWorker({
+      Worker,
+      workerUrl: ext.runtime.getURL(WORKER_PROBE_SCRIPT),
+    });
+  } catch (err) {
+    return { ok: false, reason: String(err && err.message ? err.message : err) };
+  }
+}
+
+async function probeWorkerRouted() {
+  const offscreenAvailable = shouldUseOffscreen(ext);
+  return runWorkerProbe({
+    offscreenAvailable,
+    hasOffscreenDocument,
+    probeOffscreen: probeExtensionWorkerOffscreen,
+    probeLocal: offscreenAvailable ? undefined : probeExtensionWorkerLocal,
+  });
+}
+
+async function routeWebrtc(ip) {
+  const offscreenAvailable = shouldUseOffscreen(ext);
+  const result = await runWebrtcProbe({
+    offscreenAvailable,
+    probeOffscreen: (targetIp) => tellOffscreen({ type: MSG.OFFSCREEN_WEBRTC, ip: targetIp }),
+    probeLocal: offscreenAvailable ? undefined : () => probeWebRtc(ip),
+    ip,
+  });
+  if (result && typeof result === "object" && result.status) {
+    return pipeline.onWebRtcResult(result);
+  }
+}
+
+async function prepare(reason) {
   await ensureDefaults();
   await hydrateFromStorage();
   const snap = pipeline.snapshot();
   await refreshAction(snap.state, snap.settings);
-  await chrome.alarms.create(ALARM_KEEPALIVE, { periodInMinutes: 1 });
-  await chrome.alarms.create(ALARM_DNS, { periodInMinutes: DNS_ALARM_MINUTES });
+  await ext.alarms.create(ALARM_KEEPALIVE, { periodInMinutes: 1 });
+  await ext.alarms.create(ALARM_DNS, { periodInMinutes: DNS_ALARM_MINUTES });
   if (snap.settings.enabled) {
     await startPolling(snap.settings);
-    await kickEcho(reason);
   } else {
     await stopBackgroundWork();
+  }
+  void reason;
+}
+
+function prepareOnce(reason = "load") {
+  if (!prepareGate) {
+    prepareGate = prepare(reason).catch((err) => {
+      prepareGate = null;
+      throw err;
+    });
+  }
+  return prepareGate;
+}
+
+async function boot(reason) {
+  await prepareOnce(reason);
+  if (
+    shouldImmediateEcho(reason, { offscreenAvailable: shouldUseOffscreen(ext) })
+  ) {
+    await kickEcho(reason);
   }
   scheduleDiagnostics("auto");
 }
 
 async function hydrateFromStorage() {
-  const data = await chrome.storage.local.get([
+  const data = await ext.storage.local.get([
     STORAGE_KEYS.settings,
     STORAGE_KEYS.state,
     STORAGE_KEYS.geoCache,
@@ -220,6 +294,12 @@ async function onSettingsChanged(next) {
 }
 
 async function startPolling(settings) {
+  if (pickBackgroundPoller(ext) === "background") {
+    applyPoller(poller.stopAll());
+    await ensureFirefoxPollAlarm(settings);
+    return;
+  }
+  await clearFirefoxPollAlarm();
   const ok = await ensureOffscreen();
   if (ok) {
     const sent = await tellOffscreen({ type: MSG.OFFSCREEN_START, intervalSec: settings.intervalSec });
@@ -247,8 +327,11 @@ async function startPolling(settings) {
 async function stopBackgroundWork() {
   pipeline.stop();
   applyPoller(poller.stopAll());
-  await tellOffscreen({ type: MSG.OFFSCREEN_STOP });
-  await closeOffscreen();
+  await clearFirefoxPollAlarm();
+  if (shouldUseOffscreen(ext)) {
+    await tellOffscreen({ type: MSG.OFFSCREEN_STOP });
+    await closeOffscreen();
+  }
 }
 
 function applyPoller(action) {
@@ -265,11 +348,11 @@ async function handleMessage(message) {
   if (type === MSG.IP_ECHO) return onIpEcho(message);
   if (type === MSG.WEBRTC_RESULT) return pipeline.onWebRtcResult(message.result);
   if (type === MSG.OPEN_OPTIONS) {
-    await chrome.runtime.openOptionsPage();
+    await ext.runtime.openOptionsPage();
     return { ok: true };
   }
   if (type === MSG.OPEN_DIAGNOSTICS) {
-    await chrome.tabs.create({ url: chrome.runtime.getURL(DIAGNOSTICS_URL) });
+    await ext.tabs.create({ url: ext.runtime.getURL(DIAGNOSTICS_URL) });
     return { ok: true };
   }
   if (type === MSG.DIAGNOSTICS_RUN) {
@@ -343,7 +426,7 @@ async function patchSettings(patch) {
   const enabledFlipped =
     Object.prototype.hasOwnProperty.call(patch, "enabled") && patch.enabled !== snap.settings.enabled;
   const modeChanged = patch.locationMode && patch.locationMode !== snap.settings.locationMode;
-  await chrome.storage.local.set({ [STORAGE_KEYS.settings]: settings });
+  await ext.storage.local.set({ [STORAGE_KEYS.settings]: settings });
   pipeline.setSettings(settings);
 
   if (modeChanged && snap.state && snap.state.ip && snap.state.rawLatitude != null) {
@@ -363,7 +446,7 @@ async function patchSettings(patch) {
     const geoCache = { ...snap.geoCache };
     const key = snap.state.ip;
     pipeline.hydrate({ settings, state, geoCache });
-    await chrome.storage.local.set({ [STORAGE_KEYS.state]: state, [STORAGE_KEYS.geoCache]: geoCache });
+    await ext.storage.local.set({ [STORAGE_KEYS.state]: state, [STORAGE_KEYS.geoCache]: geoCache });
     await refreshAction(state, settings);
     void key;
   }
@@ -391,30 +474,37 @@ async function getSnapshot() {
 }
 
 async function ensureDefaults() {
-  const data = await chrome.storage.local.get([STORAGE_KEYS.settings]);
+  const data = await ext.storage.local.get([STORAGE_KEYS.settings]);
   if (!data[STORAGE_KEYS.settings]) {
-    await chrome.storage.local.set({ [STORAGE_KEYS.settings]: { ...DEFAULT_SETTINGS } });
+    await ext.storage.local.set({ [STORAGE_KEYS.settings]: { ...DEFAULT_SETTINGS } });
   }
 }
 
 async function hasOffscreenDocument() {
-  if (chrome.offscreen && typeof chrome.offscreen.hasDocument === "function") {
-    return chrome.offscreen.hasDocument();
+  if (!shouldUseOffscreen(ext)) return false;
+  if (ext.offscreen && typeof ext.offscreen.hasDocument === "function") {
+    return ext.offscreen.hasDocument();
   }
-  const url = chrome.runtime.getURL(OFFSCREEN_URL);
-  const ctxs = await chrome.runtime.getContexts({
-    contextTypes: ["OFFSCREEN_DOCUMENT"],
-    documentUrls: [url],
-  });
-  return ctxs.length > 0;
+  if (typeof ext.runtime.getContexts !== "function") return false;
+  try {
+    const url = ext.runtime.getURL(OFFSCREEN_URL);
+    const ctxs = await ext.runtime.getContexts({
+      contextTypes: ["OFFSCREEN_DOCUMENT"],
+      documentUrls: [url],
+    });
+    return ctxs.length > 0;
+  } catch {
+    return false;
+  }
 }
 
 async function ensureOffscreen() {
+  if (!shouldUseOffscreen(ext)) return false;
   if (creatingOffscreen) return creatingOffscreen;
   creatingOffscreen = (async () => {
     try {
       if (await hasOffscreenDocument()) return true;
-      await chrome.offscreen.createDocument({
+      await ext.offscreen.createDocument({
         url: OFFSCREEN_URL,
         reasons: ["WEB_RTC"],
         justification: "Poll the browser proxy exit IP and probe WebRTC ICE candidates for leaks.",
@@ -433,16 +523,18 @@ async function ensureOffscreen() {
 }
 
 async function closeOffscreen() {
+  if (!shouldUseOffscreen(ext)) return;
   try {
-    if (await hasOffscreenDocument()) await chrome.offscreen.closeDocument();
+    if (await hasOffscreenDocument()) await ext.offscreen.closeDocument();
   } catch {
     /* already closed */
   }
 }
 
 async function tellOffscreen(payload) {
+  if (!shouldUseOffscreen(ext)) return false;
   try {
-    await chrome.runtime.sendMessage(payload);
+    await ext.runtime.sendMessage(payload);
     return true;
   } catch {
     return false;
@@ -484,15 +576,57 @@ function stopSwFallback() {
   swLoopStopped = true;
 }
 
+async function ensureFirefoxPollAlarm(settings) {
+  let existing = null;
+  try {
+    existing = await ext.alarms.get(ALARM_FIREFOX_POLL);
+  } catch {
+    existing = null;
+  }
+  const plan = planFirefoxPolling({
+    enabled: !!(settings && settings.enabled),
+    offscreenAvailable: shouldUseOffscreen(ext),
+    existingAlarm: existing,
+    intervalSec: settings && settings.intervalSec,
+  });
+  if (plan.action === "clear" || plan.action === "create") {
+    await clearFirefoxPollAlarm();
+  }
+  if (plan.action === "create") {
+    await ext.alarms.create(ALARM_FIREFOX_POLL, plan.info);
+  }
+  return plan;
+}
+
+async function clearFirefoxPollAlarm() {
+  try {
+    await ext.alarms.clear(ALARM_FIREFOX_POLL);
+  } catch {
+    /* ignore */
+  }
+}
+
+async function onFirefoxPoll() {
+  if (shouldUseOffscreen(ext)) return;
+  await prepareOnce("poll");
+  const { settings } = pipeline.snapshot();
+  if (!settings.enabled) {
+    await clearFirefoxPollAlarm();
+    return;
+  }
+  await ensureFirefoxPollAlarm(settings);
+  await kickEcho("poll");
+}
+
 async function refreshAction(state, settings) {
-  await updateBadge(chrome.action, state, settings && settings.enabled);
+  await updateBadge(ext.action, state, settings && settings.enabled);
 }
 
 async function injectBootstrap(details) {
   if (!details || !details.url || !/^https?:/.test(details.url)) return;
   try {
     const snap = await getSnapshot();
-    await chrome.scripting.executeScript({
+    await ext.scripting.executeScript({
       target: { tabId: details.tabId, frameIds: [details.frameId] },
       world: "MAIN",
       injectImmediately: true,
@@ -507,14 +641,14 @@ async function injectBootstrap(details) {
 async function pushToOpenPages(snap) {
   let queried = [];
   try {
-    queried = await chrome.tabs.query({});
+    queried = await ext.tabs.query({});
   } catch {
     queried = [];
   }
   const tabIds = collectTabIds(seenTabs.keys(), queried);
   for (const tabId of tabIds) {
     try {
-      await chrome.scripting.executeScript({
+      await ext.scripting.executeScript({
         target: { tabId, allFrames: true },
         world: "MAIN",
         func: bootstrapMainWorld,

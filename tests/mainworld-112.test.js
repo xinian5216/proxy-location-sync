@@ -39,7 +39,7 @@ function wait(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-function loadInjected({ bootstrap, permission = "granted" } = {}) {
+function loadInjected({ bootstrap, permission = "granted", withHtmlGeo = true } = {}) {
   const isolated = vm.runInNewContext("({ Date, Intl })");
   const hostTz = new isolated.Intl.DateTimeFormat().resolvedOptions().timeZone;
   const hostOffset = new isolated.Date().getTimezoneOffset();
@@ -176,7 +176,6 @@ function loadInjected({ bootstrap, permission = "granted" } = {}) {
     GeolocationCoordinates,
     GeolocationPosition,
     GeolocationPositionError,
-    HTMLGeolocationElement,
     console,
     Worker: class Worker {
       constructor() {
@@ -205,6 +204,8 @@ function loadInjected({ bootstrap, permission = "granted" } = {}) {
       },
     ),
   };
+  if (withHtmlGeo) sandbox.HTMLGeolocationElement = HTMLGeolocationElement;
+  else sandbox.HTMLGeolocationElement = undefined;
   sandbox.globalThis = sandbox;
   sandbox.window = sandbox;
   sandbox.window.addEventListener = (type, fn) => listeners.push({ type, fn });
@@ -733,6 +734,26 @@ describe("[runtime injected] HTMLGeolocationElement permission + watch events", 
     assert.ok(lats.includes(TOKYO.latitude));
     assert.ok(lats.includes(LA.latitude));
     assert.ok(events.every((e) => e.trusted === false));
+  });
+});
+
+describe("[runtime injected] 1.3.0 Firefox-missing APIs stay fail-closed", () => {
+  test("[runtime injected] missing HTMLGeolocationElement is skipped, not faked; geo still fail-closed", async () => {
+    const { sandbox } = loadInjected({ withHtmlGeo: false });
+    applyReady(sandbox, TOKYO);
+    assert.equal(typeof sandbox.HTMLGeolocationElement, "undefined");
+    const pos = await currentPosition(sandbox);
+    assert.equal(pos.coords.latitude, TOKYO.latitude);
+    assert.notEqual(pos.coords.latitude, NATIVE.coords.latitude);
+  });
+
+  test("[runtime injected] explicit-zone Date.parse equals this engine native parser", () => {
+    const { sandbox } = loadInjected();
+    applyReady(sandbox, TOKYO);
+    const samples = ["Jan 1 2026 00:00 EST", "Jan 1 2026 00:00 PDT", "2026-01-15T12:00:00Z"];
+    for (const s of samples) {
+      assert.equal(sandbox.Date.parse(s), Date.parse(s), s);
+    }
   });
 });
 

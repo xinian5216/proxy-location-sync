@@ -1,0 +1,14 @@
+{
+  "minimum_chrome_version": "116",
+  "background": {
+    "service_worker": "background/service-worker.js",
+    "type": "module"
+  },
+  "permissions": [
+    "storage",
+    "alarms",
+    "offscreen",
+    "scripting",
+    "webNavigation"
+  ]
+}

@@ -19,20 +19,33 @@ describe("source guards (no leak / no fake / no extra perms)", () => {
   const pipeline = read("lib/exit-pipeline.js");
   const timezone = read("lib/timezone.js");
 
-  test("manifest 1.2.4, no tabs permission, min Chrome 116", () => {
-    assert.equal(manifest.version, "1.2.4");
-    assert.equal(manifest.minimum_chrome_version, "116");
-    assert.deepEqual(manifest.permissions.sort(), [
-      "alarms",
-      "offscreen",
-      "scripting",
-      "storage",
-      "webNavigation",
-    ]);
+  test("manifest 1.3.1 MV3, no tabs/debugger/privacy; Chromium vs Firefox overlay", () => {
+    assert.equal(manifest.version, "1.3.1");
+    assert.equal(manifest.manifest_version, 3);
     assert.equal(manifest.optional_permissions, undefined);
     assert.ok(!JSON.stringify(manifest).includes("debugger"));
     assert.ok(!JSON.stringify(manifest).includes("privacy"));
     assert.ok(!manifest.permissions.includes("tabs"));
+    const gecko = manifest.browser_specific_settings && manifest.browser_specific_settings.gecko;
+    if (gecko) {
+      assert.deepEqual(manifest.background.scripts, ["background/service-worker.js"]);
+      assert.equal(manifest.background.persistent, false);
+      assert.equal(manifest.background.service_worker, undefined);
+      assert.ok(!manifest.permissions.includes("offscreen"));
+      assert.equal(gecko.id, "proxy-location-sync@xinian5216");
+      assert.equal(gecko.strict_min_version, "128.0");
+    } else {
+      assert.equal(manifest.minimum_chrome_version, "116");
+      assert.equal(manifest.background.service_worker, "background/service-worker.js");
+      assert.equal(manifest.background.scripts, undefined);
+      assert.deepEqual(manifest.permissions.sort(), [
+        "alarms",
+        "offscreen",
+        "scripting",
+        "storage",
+        "webNavigation",
+      ]);
+    }
   });
 
   test("default locationMode is raw", () => {
@@ -86,18 +99,21 @@ describe("source guards (no leak / no fake / no extra perms)", () => {
     assert.match(offscreen, /nextPollDelayMs/);
   });
 
-  test("isolated world bridges storage and PAGE_ENV probe, no chrome.tabs", () => {
+  test("isolated world bridges storage and PAGE_ENV probe, no tabs API", () => {
     assert.doesNotMatch(isolated, /chrome\.tabs\./);
+    assert.doesNotMatch(isolated, /ext\.tabs\./);
     assert.match(isolated, /CustomEvent/);
     assert.match(isolated, /PAGE_ENV_PROBE/);
     assert.match(isolated, /PROBE/);
+    assert.match(isolated, /const ext = /);
+    assert.match(isolated, /storageGet/);
   });
 
-  test("service worker uses exit pipeline, lookupGeo(targetIp), tabs.query", () => {
+  test("service worker uses exit pipeline, lookupGeo(targetIp), ext.tabs.query", () => {
     assert.match(sw, /createExitPipeline/);
     assert.match(sw, /lookupGeo/);
     assert.match(sw, /pipeline\.onEcho/);
-    assert.match(sw, /chrome\.tabs\.query/);
+    assert.match(sw, /ext\.tabs\.query/);
     assert.match(sw, /collectTabIds/);
     assert.match(sw, /nextPollDelayMs/);
     assert.match(sw, /createDiagnosticsController/);
@@ -203,6 +219,8 @@ describe("source guards (no leak / no fake / no extra perms)", () => {
     assert.match(offscreen, /OFFSCREEN_WORKER_PROBE/);
     assert.match(offscreen, /probeExtensionWorker/);
     assert.match(sw, /probeExtensionWorkerOffscreen/);
+    assert.match(sw, /probeWorkerRouted/);
+    assert.match(sw, /runWorkerProbe/);
     assert.match(sw, /OFFSCREEN_WORKER_PROBE/);
     assert.match(runner, /probeWorker/);
     assert.match(diagEval, /worker: input\.worker/);
@@ -216,11 +234,58 @@ describe("source guards (no leak / no fake / no extra perms)", () => {
     assert.match(badge, /toUpperCase\(\)/);
     assert.match(badge, /slice\(0,\s*2\)/);
     assert.match(sw, /from "\.\.\/lib\/badge\.js"/);
-    const boot = sw.match(/async function boot\(reason\) \{[\s\S]*?\n\}/);
-    assert.ok(boot);
-    const hyd = boot[0].indexOf("hydrateFromStorage");
-    const ref = boot[0].indexOf("refreshAction(snap.state, snap.settings)");
+    const prep = sw.match(/async function prepare\(reason\) \{[\s\S]*?\n\}/);
+    assert.ok(prep);
+    const hyd = prep[0].indexOf("hydrateFromStorage");
+    const ref = prep[0].indexOf("refreshAction(snap.state, snap.settings)");
     assert.ok(hyd >= 0 && ref > hyd);
-    assert.doesNotMatch(boot[0], /lookupGeo/);
+    assert.doesNotMatch(prep[0], /lookupGeo/);
+  });
+
+  test("1.3.0 unified ext API, Firefox event-page poller, no offscreen on Firefox overlay", () => {
+    const firefox = JSON.parse(read("manifests/firefox.json"));
+    const chromium = JSON.parse(read("manifests/chromium.json"));
+    const base = JSON.parse(read("manifests/base.json"));
+    assert.equal(base.version, "1.3.1");
+    assert.equal(firefox.background.scripts[0], "background/service-worker.js");
+    assert.equal(firefox.background.persistent, false);
+    assert.equal(firefox.background.service_worker, undefined);
+    assert.ok(!firefox.permissions.includes("offscreen"));
+    assert.equal(firefox.browser_specific_settings.gecko.id, "proxy-location-sync@xinian5216");
+    assert.equal(firefox.browser_specific_settings.gecko.strict_min_version, "128.0");
+    assert.equal(chromium.background.service_worker, "background/service-worker.js");
+    assert.equal(chromium.background.scripts, undefined);
+    assert.ok(chromium.permissions.includes("offscreen"));
+    assert.match(sw, /from "\.\.\/lib\/browser-api\.js"/);
+    assert.match(sw, /shouldUseOffscreen/);
+    assert.match(sw, /pickBackgroundPoller/);
+    assert.match(sw, /routeWebrtc/);
+    assert.match(sw, /isServiceWorkerScope/);
+    assert.match(sw, /ensureFirefoxPollAlarm/);
+    assert.match(sw, /ALARM_FIREFOX_POLL/);
+    assert.match(sw, /onFirefoxPoll/);
+    assert.match(sw, /shouldImmediateEcho/);
+    assert.match(sw, /prepareOnce/);
+    const fxPoll = sw.match(/if \(pickBackgroundPoller\(ext\) === "background"\) \{[\s\S]*?\n  \}/);
+    assert.ok(fxPoll);
+    assert.doesNotMatch(fxPoll[0], /startSwFallback/);
+    assert.match(fxPoll[0], /ensureFirefoxPollAlarm/);
+    const popup = read("popup/popup.js");
+    const options = read("options/options.js");
+    const diag = read("diagnostics/diagnostics.js");
+    assert.match(popup, /import \{ ext \}/);
+    assert.match(options, /import \{ ext \}/);
+    assert.match(diag, /import \{ ext \}/);
+    assert.match(diag, /htmlGeolocationLabel/);
+    assert.doesNotMatch(popup, /chrome\.runtime/);
+    assert.doesNotMatch(options, /chrome\.runtime/);
+    assert.doesNotMatch(diag, /chrome\.runtime/);
+  });
+
+  test("1.3.1 source zip includes scripts/build-extension.mjs", () => {
+    const build = read("scripts/build-extension.mjs");
+    assert.match(build, /function copyTree/);
+    assert.match(build, /"scripts"/);
+    assert.match(build, /packageAll/);
   });
 });

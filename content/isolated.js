@@ -1,14 +1,16 @@
 /**
  * Isolated world 桥：storage → MAIN CustomEvent。
- * MAIN 拿不到 chrome.*。不发 chrome.tabs 消息。
+ * MAIN 拿不到 chrome.* / browser.*。不发 tabs 消息。
  *
  * 故意不带 trusted。MAIN 把 CustomEvent 一律视为不可信，
  * 网页伪造 __pls_v1 不能把扩展切到 native geolocation。
  *
  * PAGE_ENV_PROBE：向 MAIN 发 PROBE，收回 PAGE_ENV（http(s) 页，不是扩展页）。
+ * 经典脚本，不能 import；统一走 ext（Firefox browser.* / Chromium chrome.*）。
  */
 
 const PAGE_EVENT = "__pls_v1";
+const ext = typeof browser !== "undefined" && browser && browser.runtime ? browser : chrome;
 
 function publish(payload) {
   try {
@@ -18,8 +20,25 @@ function publish(payload) {
   }
 }
 
+function storageGet(keys, cb) {
+  try {
+    const ret = ext.storage.local.get(keys);
+    if (ret && typeof ret.then === "function") {
+      ret.then((data) => cb(data || {})).catch(() => cb({}));
+      return;
+    }
+  } catch {
+    /* fall through to callback form */
+  }
+  try {
+    ext.storage.local.get(keys, (data) => cb(data || {}));
+  } catch {
+    cb({});
+  }
+}
+
 function readAndPublish() {
-  chrome.storage.local.get(["settings", "state"], (data) => {
+  storageGet(["settings", "state"], (data) => {
     publish({
       type: "STATE",
       source: "isolated",
@@ -31,7 +50,7 @@ function readAndPublish() {
 
 readAndPublish();
 
-chrome.storage.onChanged.addListener((changes, area) => {
+ext.storage.onChanged.addListener((changes, area) => {
   if (area !== "local") return;
   if (changes.state || changes.settings) readAndPublish();
 });
@@ -48,7 +67,7 @@ window.addEventListener(PAGE_EVENT, (ev) => {
   }
 });
 
-chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+ext.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (!message || message.type !== "PAGE_ENV_PROBE") return;
   if (probeWait) {
     sendResponse({ ok: false, error: "busy" });
