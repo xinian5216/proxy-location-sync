@@ -1,0 +1,285 @@
+{
+  "project": "proxy-location-sync",
+  "version": "1.3.1",
+  "license": "MIT",
+  "repository": "https://github.com/xinian5216/proxy-location-sync",
+  "entry": "AGENTS.md",
+  "docs": {
+    "index": "docs/agent/INDEX.md",
+    "architecture": "docs/agent/ARCHITECTURE.md",
+    "invariants": "docs/agent/INVARIANTS.md",
+    "currentState": "docs/agent/CURRENT_STATE.md",
+    "decisions": "docs/agent/DECISIONS.md",
+    "releaseChecklist": "docs/agent/RELEASE_CHECKLIST.md",
+    "claude": "CLAUDE.md",
+    "copilot": ".github/copilot-instructions.md"
+  },
+  "platforms": ["chromium", "firefox"],
+  "runtime": {
+    "chromium": {
+      "background": "service_worker",
+      "poller": "offscreen",
+      "fallback": "service_worker_setTimeout_only_if_offscreen_fails",
+      "minimum": "116",
+      "manifest": ["manifests/base.json", "manifests/chromium.json"],
+      "permissions": ["storage", "alarms", "offscreen", "scripting", "webNavigation"]
+    },
+    "firefox": {
+      "background": "event_page",
+      "poller": "alarm:pls-firefox-poll",
+      "fallback": "none",
+      "offscreen": false,
+      "minimum": "128.0",
+      "geckoId": "proxy-location-sync@xinian5216",
+      "manifest": ["manifests/base.json", "manifests/firefox.json"],
+      "permissions": ["storage", "alarms", "scripting", "webNavigation"]
+    }
+  },
+  "subsystems": {
+    "ip-polling": {
+      "source": [
+        "lib/ip-providers.js",
+        "lib/ip-compare.js",
+        "lib/provider-health.js",
+        "lib/net.js",
+        "lib/poll-sleep.js",
+        "lib/poller-mode.js",
+        "lib/echo-stale.js",
+        "lib/detect-session.js",
+        "lib/detect-engine.js",
+        "lib/exit-pipeline.js",
+        "lib/constants.js",
+        "background/service-worker.js"
+      ],
+      "tests": [
+        "tests/ip-compare.test.js",
+        "tests/exit-pipeline.test.js",
+        "tests/detect-race.test.js"
+      ]
+    },
+    "geo": {
+      "source": [
+        "lib/geo-providers.js",
+        "lib/geo.js",
+        "lib/geo-mode.js",
+        "lib/detect-engine.js",
+        "lib/exit-pipeline.js"
+      ],
+      "tests": [
+        "tests/detect-race.test.js",
+        "tests/exit-pipeline.test.js",
+        "tests/stability.test.js"
+      ]
+    },
+    "main-world": {
+      "source": [
+        "content/injected.js",
+        "content/isolated.js",
+        "background/service-worker.js"
+      ],
+      "tests": [
+        "tests/mainworld-112.test.js",
+        "tests/source-guard.test.js",
+        "tests/lifecycle-112.test.js",
+        "tests/cross-browser-130.test.js"
+      ],
+      "fixtures": ["tests/frames.html"]
+    },
+    "geolocation": {
+      "source": [
+        "lib/geolocation-gate.js",
+        "lib/html-geo-element.js",
+        "lib/geo-mode.js",
+        "lib/platform-runtime.js",
+        "content/injected.js"
+      ],
+      "tests": [
+        "tests/geolocation-gate.test.js",
+        "tests/mainworld-112.test.js",
+        "tests/lifecycle-112.test.js"
+      ],
+      "fixtures": ["tests/geolocation-element.html"]
+    },
+    "date-intl": {
+      "source": ["lib/timezone.js", "content/injected.js"],
+      "tests": [
+        "tests/timezone-dst.test.js",
+        "tests/mainworld-112.test.js",
+        "tests/cross-browser-130.test.js"
+      ]
+    },
+    "diagnostics": {
+      "source": [
+        "lib/diagnostics.js",
+        "lib/diagnostics-runner.js",
+        "lib/worker-probe.js",
+        "diagnostics/worker-probe.js",
+        "diagnostics/diagnostics.js",
+        "diagnostics/diagnostics.html",
+        "diagnostics/diagnostics.css",
+        "popup/popup.js"
+      ],
+      "tests": ["tests/diagnostics.test.js", "tests/mainworld-112.test.js"]
+    },
+    "dns": {
+      "source": [
+        "lib/dns-providers.js",
+        "lib/diagnostics-runner.js",
+        "lib/constants.js"
+      ],
+      "tests": ["tests/diagnostics.test.js"]
+    },
+    "webrtc": {
+      "source": [
+        "lib/webrtc.js",
+        "lib/platform-runtime.js",
+        "offscreen/offscreen.js",
+        "background/service-worker.js"
+      ],
+      "tests": [
+        "tests/webrtc.test.js",
+        "tests/lifecycle-112.test.js",
+        "tests/cross-browser-130.test.js"
+      ]
+    },
+    "badge": {
+      "source": ["lib/badge.js", "background/service-worker.js"],
+      "tests": [
+        "tests/badge.test.js",
+        "tests/source-guard.test.js",
+        "tests/cross-browser-130.test.js"
+      ]
+    },
+    "firefox-runtime": {
+      "source": [
+        "lib/firefox-poll.js",
+        "lib/browser-api.js",
+        "lib/platform-runtime.js",
+        "lib/constants.js",
+        "background/service-worker.js",
+        "manifests/firefox.json",
+        "manifests/base.json"
+      ],
+      "tests": [
+        "tests/firefox-poll.test.js",
+        "tests/browser-api.test.js",
+        "tests/platform-runtime.test.js",
+        "tests/cross-browser-130.test.js"
+      ]
+    },
+    "chromium-offscreen": {
+      "source": [
+        "offscreen/offscreen.js",
+        "offscreen/offscreen.html",
+        "lib/poller-mode.js",
+        "lib/poll-sleep.js",
+        "background/service-worker.js",
+        "manifests/chromium.json",
+        "manifests/base.json"
+      ],
+      "tests": [
+        "tests/exit-pipeline.test.js",
+        "tests/stability.test.js",
+        "tests/source-guard.test.js"
+      ]
+    },
+    "platform-adapter": {
+      "source": [
+        "lib/browser-api.js",
+        "lib/platform-runtime.js",
+        "popup/popup.js",
+        "options/options.js",
+        "diagnostics/diagnostics.js"
+      ],
+      "tests": [
+        "tests/browser-api.test.js",
+        "tests/platform-runtime.test.js",
+        "tests/source-guard.test.js"
+      ]
+    },
+    "build": {
+      "source": [
+        "scripts/build-extension.mjs",
+        "package.json",
+        "manifests/base.json",
+        "manifests/chromium.json",
+        "manifests/firefox.json",
+        "manifest.json"
+      ],
+      "tests": [
+        "tests/source-guard.test.js",
+        "tests/cross-browser-130.test.js",
+        "tests/stability.test.js"
+      ]
+    },
+    "tests": {
+      "source": [],
+      "tests": [
+        "tests/badge.test.js",
+        "tests/browser-api.test.js",
+        "tests/cross-browser-130.test.js",
+        "tests/detect-race.test.js",
+        "tests/diagnostics.test.js",
+        "tests/exit-pipeline.test.js",
+        "tests/firefox-poll.test.js",
+        "tests/geolocation-gate.test.js",
+        "tests/ip-compare.test.js",
+        "tests/lifecycle-112.test.js",
+        "tests/mainworld-112.test.js",
+        "tests/platform-runtime.test.js",
+        "tests/source-guard.test.js",
+        "tests/stability.test.js",
+        "tests/timezone-dst.test.js",
+        "tests/webrtc.test.js"
+      ],
+      "fixtures": ["tests/frames.html", "tests/geolocation-element.html"]
+    }
+  },
+  "invariants": [
+    "enabled=true must never fall back to real system GPS",
+    "IP Echo is decoupled from Geo lookup",
+    "slow Geo must not block the next IP Echo",
+    "latest generation wins",
+    "same-IP heartbeat writes zero storage",
+    "a new exit must discard async results from the old exit",
+    "manual diagnostics must not be aborted by same-IP auto",
+    "a new IP may preempt diagnostics of the old IP",
+    "Worker diagnostics must not use a Blob Worker on the target page",
+    "Chromium uses Service Worker + Offscreen",
+    "Firefox uses Event Page + alarms; no Offscreen; no Event Page setTimeout polling loop",
+    "unsupported Firefox APIs are skipped after feature detection",
+    "do not spoof language, UA, Canvas, WebGL, or fonts",
+    "do not break stable Chromium behavior for Firefox compatibility"
+  ],
+  "stableModulesDoNotCasualEdit": [
+    "content/injected.js",
+    "lib/exit-pipeline.js",
+    "lib/geolocation-gate.js",
+    "lib/html-geo-element.js",
+    "lib/timezone.js",
+    "offscreen/offscreen.js",
+    "lib/firefox-poll.js",
+    "lib/diagnostics-runner.js",
+    "manifests/base.json",
+    "manifests/chromium.json",
+    "manifests/firefox.json"
+  ],
+  "commands": {
+    "test": "npm test",
+    "testRaw": "node --test tests/*.test.js",
+    "build": "npm run build",
+    "buildChromium": "npm run build:chromium",
+    "buildFirefox": "npm run build:firefox",
+    "package": "npm run package",
+    "syntax": "find . -name '*.js' -o -name '*.mjs' | grep -v '/dist/' | grep -v '/node_modules/' | xargs -n1 node --check"
+  },
+  "ci": {
+    "workflow": ".github/workflows/test.yml",
+    "runs": "node --test tests/*.test.js"
+  },
+  "unverified": [
+    "real Firefox 128+ Event Page suspend/wake E2E",
+    "Firefox 2-5s alarm fire rate",
+    "real Chrome/Edge MV3 load in CI"
+  ]
+}
